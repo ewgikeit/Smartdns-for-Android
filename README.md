@@ -1,5 +1,4 @@
 # SmartDNS - Android
-已在Magisk31.1,安卓15中测试，运行正常。
 > 本项目起源于 [x4455/smartdns-Android](https://github.com/x4455/smartdns-Android)，
 > 但已经独立演进：内核跟进 SmartDNS 官方 Release（当前 **Release 48.4**），
 > 模块侧新增了 KernelSU / MMRL WebUI、规则源管理、跨源合并去重、掉线自愈等，
@@ -9,10 +8,10 @@
 
 - **内核跟进上游**：内核二进制取自 [pymumu/smartdns](https://github.com/pymumu/smartdns) 官方 Release，当前为 `1.2026.08.05-0921`（记录在 `kernel.tag` / `kernel.version`），由 GitHub Actions 每周检查上游更新。
 - **新增 WebUI**：在模块管理器里点「打开 WebUI」即可完成启停、改端口、改模式、编辑 `smartdns.conf`、看日志，不必再手工编辑文件或敲命令。
-- **规则源（4.0 起）**：规则不再随发版更新，而是可配置的「源」——每个源有自己的地址、类型和刷新节奏，到期由看门狗自动刷新。详见 [规则源](#规则源)。
+- **规则源**：可以增删规则源——每个源有自己的地址、类型和刷新节奏，到期由看门狗自动刷新。详见 [规则源](#规则源)。内置anti-AD、chnlist、gfwlist、chnroute。
 - **掉线自愈**：开机后常驻看门狗每 30 秒检查内核进程与防火墙规则，异常自动拉起；从 WebUI 主动「停止」时不干预。
 - **维护者**：[@ewgikeit](https://github.com/ewgikeit)
-- **向后兼容**：shell 控制脚本、`script_conf.sh`、`smartdns.conf` 的格式与路径不变，升级不会覆盖你已有的配置。**唯一的例外是 4.0 会删除 `config/` 下的四张旧规则表**，见下节。
+- **向后兼容**：shell 控制脚本、`script_conf.sh`、`smartdns.conf` 的格式与路径不变，升级不会覆盖你已有的配置。
 
 
 这是一个 [Magisk](https://github.com/topjohnwu/Magisk) / [KernelSU](https://github.com/tiann/KernelSU) 模块，使 [SmartDNS](https://github.com/pymumu/smartdns) 运行在安卓设备上。使用 shell 脚本控制其的启动与停止以及达到某些目的。
@@ -33,81 +32,6 @@
 
 - 更新模块时，可能会因为参数变化而导致错误，请在刷入之后自行调整。
 - 为了避免更新导致错误或数据丢失，自动脚本**不会主动更新**。
-
-### 升级到 4.0（务必先读）
-
-4.0 改的是规则的**存放方式**，不是配置格式。你的 `smartdns.conf`、`script_conf.sh`、
-`scripts/` 都不会被覆盖，但有两件事需要知道。
-
-**风险 1：会删除 `config/` 下的四张旧规则表（约 5 MB）**
-
-```
-config/block/defaults.conf
-config/ip/chnroute.txt
-config/domain_diverg/chnlist.txt
-config/domain_diverg/gfwlist.txt
-```
-
-它们现在只作为内置源的初始副本放在 `rulesrc/seed/`，`config/` 下那份是纯重复。
-删除前提是「`seed/` 里已有同名副本且非空」+「主配置已不再引用它」，两个都满足
-才动手，所以不会出现内核找不到 `conf-file` 而拒绝启动。
-
-**风险 2：回滚到 3.4.x 需要重新铺表**
-
-3.4.x 的主配置直接引用上面那四个文件，4.0 删掉后回滚就找不到。想回滚有两条路：
-
-```shell
-# 路线 A：让 3.4.x 的包重新铺表（推荐，先删数据目录）
-su -c 'sh /data/adb/modules/smartdns/command.sh stop'
-su -c 'rm -rf /data/adb/smartdns'
-# 然后刷 3.4.x 的包并重启
-
-# 路线 B：把内置副本复制回 3.x 的位置
-su -c 'cd /data/adb/smartdns && mkdir -p config/block config/ip config/domain_diverg && \
-  cp rulesrc/seed/block-defaults.conf   config/block/defaults.conf && \
-  cp rulesrc/seed/ip-chnroute.txt       config/ip/chnroute.txt && \
-  cp rulesrc/seed/domain-chnlist.txt    config/domain_diverg/chnlist.txt && \
-  cp rulesrc/seed/domain-gfwlist.txt    config/domain_diverg/gfwlist.txt'
-```
-
-### 从 4.0 升级到 4.1
-
-4.1 只改脚本和 WebUI，**没有数据迁移**，直接覆盖刷入再重启即可，配置、规则源、
-本地 hosts 全部保留。仍然建议先按下面的「刷机步骤」备份一次。
-
-如果你在 4.0 上遇到过这两种情况，4.1 已经修掉：
-
-- 点了「更新」之后界面一直转圈、提示「已有更新任务在进行」——4.0 在更新完
-  重载内核时没有先停旧内核，撞端口后走进了极慢的兜底路径，标记文件清不掉。
-- 重启前后偶尔出现两个内核进程抢端口——4.1 给重启加了锁，同一时刻只有一个
-  重启动作能动内核。
-
-验证时看这两行就够：
-
-```shell
-su -c 'grep versionCode /data/adb/modules/smartdns/module.prop'   # 22
-su -c 'sh /data/adb/modules/smartdns/command.sh status'
-```
-
-### 从 4.1 升级到 4.2
-
-4.2 只改脚本，**没有数据迁移**，直接覆盖刷入再重启即可。
-
-第一次启动时会用现有的 `auto-*.conf` 自动生成 `merged.conf`（16 万条约 2~3 秒，
-只做一次），之后 `index.conf` 就从「逐个源引用」变成「只引用合并文件」。开机
-日志里出现 `合并 N 个源：...` 就说明生效了。旧的 `auto-*.conf` 不会删，它们是
-单源更新的判定依据。
-
-回退到 4.1 也安全：4.1 的 `index.conf` 会重新生成成逐源引用，`merged.conf`
-只是躺在那里不再被引用。
-
-验证：
-
-```shell
-su -c 'grep versionCode /data/adb/modules/smartdns/module.prop'    # 23
-su -c 'cat /data/adb/smartdns/config/rules/index.conf'             # 只有一行 merged.conf
-su -c 'cat /data/adb/smartdns/config/rules/merged.stats'           # 去重统计
-```
 
 ### 刷机步骤
 
@@ -135,13 +59,12 @@ adb pull /sdcard/sdns-backup.tgz
 
 **第三步：重启手机**
 
-4.0 的迁移在**服务启动时**做（先改配置引用、再删旧文件），所以要重启一次让它
-生效。**不要**在刷完后手动去点「启动」，等开机自启即可。
+**不要**在刷完后手动去点「启动」，等开机自启即可。
 
 **第四步：验证**
 
 ```shell
-# 版本应为 4.0.0 (21)
+# 跟随实际版本
 su -c 'grep versionCode /data/adb/modules/smartdns/module.prop'
 
 # 服务状态，rc=0 即正常
@@ -172,12 +95,11 @@ su -c 'cat /data/adb/modules/smartdns/boot.log'
 
 **第五步：打开 WebUI 确认「规则」页**
 
-六条源都应显示 `ok` 和条数，`github520` 约 40 条。点一次「全部更新」应当
-全部成功、0 失败。
+规则源都应显示 `ok` 和条数。点一次「全部更新」应当全部成功、0 失败。
 
 ### 恢复默认配置
 
-使用终端等工具，刷入前以Root权限执行以下命令
+webui点击恢复出厂，或使用终端等工具，刷入前以Root权限执行以下命令
 
 - *配置文件*: `touch /data/adb/smartdns/config/reset`
 - *自动脚本*: `touch /data/adb/smartdns/scripts/reset`
@@ -223,9 +145,6 @@ su -c 'cat /data/adb/modules/smartdns/boot.log'
     └── cache/                 远程源的下载原文
 ```
 
-> 4.0 之前，订阅大表（广告表 / 国内域名 / 国外域名 / 网段）直接铺在 `config/`
-> 下，与 `seed/` 里的副本重复占 5 MB，升级时已自动清理。
->
 > `config/rules/` 现在约 10 MB：各源的 `auto-<id>.conf`（约 5 MB）加上合并后的
 > `merged.conf`（约 5 MB）。两份都留着是有意的——各源文件用于「这个源这次变了没
 > 有」的判定和单源失败时的兜底，合并文件才是内核真正加载的那一份。
@@ -311,7 +230,7 @@ conf-file /data/adb/smartdns/config/rules/user-block.conf   # 有内容才会出
 冲突数），每次更新完会在「更新日志」里打一行摘要：
 
 ```
-[rules] 合并 5 个源：167697 条 -> 去重后 167681 条（删除重复 16，语义冲突 16）
+[rules] 合并 X 个源：X 条 -> 去重后 X 条（删除重复 X ，语义冲突 X ）
 ```
 
 `user-block.conf` / `user-allow.conf` / `user-hosts.conf` 不参与合并，始终排
@@ -349,34 +268,12 @@ su -c 'sh /data/adb/modules/smartdns/command.sh rulesrc merge'        # 只重�
 |ca-file|证书文件|ca-file /dev/smartdns/binary/CA/ca-certificates.crt
 |ca-path|证书文件路径|ca-path /dev/smartdns/binary/CA
 
-> 日志放在 `/data/adb/smartdns/log/` 而不是 `/dev/smartdns/log/`：`/dev` 是内存文件系统，
-> 重启就清空，而且部分机型上内核进程所在的安全域写不进 `/dev` 下的普通目录
-> （表现是配置里有 `log-file`、日志文件却永远不生成）。服务每次启动时会自动把
-> 老配置里的 `/dev` 路径改到 `/data` 下，原文件备份为 `smartdns.conf.bak`。
-
 其他参数设置，请参考 [配置参数](https://github.com/pymumu/smartdns/blob/master/ReadMe.md#配置参数)
 
 黑白名单
 
 - 如果一个查询返回多个ip的结果，只要其中一个在blacklist中，该结果整个丢弃。
 - 如果一个查询返回多个ip的结果，但没有任何结果符合whitelist，该结果整个丢弃。
-
-### 控制脚本配置
-
-配置文件位于 `/data/adb/smartdns/config/script_conf.sh`。脚本参数影响 iptables 规则和服务控制。修改之前，务必确保服务已经停止。
-
-|参数|功能|
-|--|--|
-|log|生成脚本运行日志|
-|language|脚本提示信息的语言|
-|Main_PORT|主要监听端口，处理本地流量|
-|Second_PORT|次要监听端口，处理代理流量 (为空时使用 Main_PORT 的值)|
-|MODE|工作模式|
-|TUN|不重定向走 VPN(tun) 的数据包|
-|WLAN|不重定向走 WiFi(wlan) 的数据包|
-|DATA|不重定向走 DATA(rmnet_data) 的数据包|
-|PKG|不重定向特定应用的数据包 (填包名或UID，用空格分隔)|
-|IP6T_BLOCK|封锁或重定向本机 IPv6 网络上的数据包|
 
 工作模式介绍
 
@@ -423,7 +320,7 @@ IP6T_BLOCK 介绍
 
 ## 异常解决
 
-- 使用 `smartdns -clean` 命令清理可。这会尝试将 iptables 恢复至开机后首次启动时记录的状态，会对使用到 iptables 的程序造成一些影响。
+- 点击清理规则或使用 `smartdns -clean` 命令清理。这会尝试将 iptables 恢复至开机后首次启动时记录的状态，会对使用到 iptables 的程序造成一些影响。
 
 ### 代理类应用兼容性
 
@@ -526,8 +423,6 @@ echo | openssl s_client -connect dns.alidns.com:443 -servername dns.alidns.com -
 
 - [GitHub520](https://github.com/521xueweihan/GitHub520) | 521xueweihan（经 `raw.hellogithub.com` 分发）
 - [Steam520](https://github.com/pboymt/Steam520) | pboymt
-
-> 早期版本的致谢里列过 [AD-hosts](https://github.com/E7KMbb/AD-hosts)，但这个分支从未使用过它的数据（`config/` 里的广告表来自 anti-AD），该列表也已停止维护，现已移除。
 
 ## 捐赠
 
