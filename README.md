@@ -1,8 +1,4 @@
 # SmartDNS - Android
-> 本项目起源于 [x4455/smartdns-Android](https://github.com/x4455/smartdns-Android)，
-> 但已经独立演进：内核跟进 SmartDNS 官方 Release（当前 **Release 48.4**），
-> 模块侧新增了 KernelSU / MMRL WebUI、规则源管理、跨源合并去重、掉线自愈等，
-> 与原仓库的代码结构、配置格式和发版节奏都已不同。原作署名见文末「感谢」。
 
 ## 关于本项目
 
