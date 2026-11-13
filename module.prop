@@ -3,5 +3,5 @@ name=SmartDNS
 version=4.2.0 (1.2026.08.05-0921)
 versionCode=23
 author=ewgikeit
-description=让 SmartDNS 运行在 Android 上。支持 Magisk / KernelSU / APatch，内置 WebUI：服务启停、端口与模式、放行应用、smartdns.conf 在线编辑与配置测试、日志查看、规则源增删改与自定义更新周期，掉线自动拉起。内核 pymumu/smartdns，移植自 x4455/smartdns-Android。
+description=让 SmartDNS 运行在 Android 上。内置 WebUI：服务启停、端口与模式、放行应用、smartdns.conf 在线编辑与配置测试、日志查看、规则源增删改与自定义更新周期，掉线自动拉起。
 updateJson=https://github.com/ewgikeit/Smartdns-for-Android/raw/master/updateinfo.json
