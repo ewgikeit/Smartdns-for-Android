@@ -1,0 +1,91 @@
+name: Update Kernel
+
+on:
+  schedule:
+    # 每周一 03:00 UTC 检查上游是否有新 Release
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-kernel
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 查询上游最新 Release
+        id: up
+        run: |
+          set -euo pipefail
+          api=https://api.github.com/repos/pymumu/smartdns/releases/latest
+          json=$(curl -fsSL "$api")
+          tag=$(printf '%s' "$json" | jq -r '.tag_name')
+          ver=$(printf '%s' "$json" | jq -r '.assets[].name' \
+                | sed -n 's/^smartdns\.\(.*\)\.aarch64-linux-all\.tar\.gz$/\1/p' | head -n 1)
+          current=$(tr -d '\r\n' < kernel.tag 2>/dev/null || true)
+
+          echo "tag=$tag"     >> "$GITHUB_OUTPUT"
+          echo "ver=$ver"     >> "$GITHUB_OUTPUT"
+          echo "上游最新: ${tag} (内核 ${ver}); 当前: ${current}"
+
+          if [ "$tag" != "$current" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 下载并校验内核二进制
+        if: steps.up.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          base="https://github.com/pymumu/smartdns/releases/download/${{ steps.up.outputs.tag }}"
+          curl -fL --retry 3 --retry-delay 5 -o binary/arm   "$base/smartdns-arm"
+          curl -fL --retry 3 --retry-delay 5 -o binary/arm64 "$base/smartdns-aarch64"
+          chmod +x binary/arm binary/arm64
+
+          # e_machine: arm=0x28 (2800), aarch64=0xb7 (b700)
+          arm_m=$(od -An -tx1 -j18 -N2 binary/arm | tr -d ' \n')
+          arm64_m=$(od -An -tx1 -j18 -N2 binary/arm64 | tr -d ' \n')
+          echo "arm e_machine=$arm_m, arm64 e_machine=$arm64_m"
+          [ "$arm_m" = "2800" ]   || { echo '::error::binary/arm 架构校验失败'; exit 1; }
+          [ "$arm64_m" = "b700" ] || { echo '::error::binary/arm64 架构校验失败'; exit 1; }
+
+      - name: 更新版本记录并提交
+        if: steps.up.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.up.outputs.tag }}"
+          ver="${{ steps.up.outputs.ver }}"
+
+          printf '%s\n' "$tag" > kernel.tag
+          [ -n "$ver" ] && printf '%s\n' "$ver" > kernel.version
+
+          vc=$(grep '^versionCode=' module.prop | cut -d= -f2)
+          sed -i "s/^versionCode=.*/versionCode=$((vc + 1))/" module.prop
+
+          # module.prop 的 version 形如 "3.2.0 (1.2026.08.05-0921)"，同步括号内的内核版本
+          if [ -n "$ver" ]; then
+            sed -i -E "s/^version=([0-9]+\.[0-9]+\.[0-9]+) ?\(.*\)/version=\1 ($ver)/" module.prop
+          fi
+          grep '^version' module.prop
+
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add binary/arm binary/arm64 kernel.tag kernel.version module.prop
+          if git diff --cached --quiet; then
+            echo '没有变化，跳过提交'
+            exit 0
+          fi
+          git commit -m "chore: 内核更新至 ${tag} (${ver})"
+          git push
+
+      - name: 无更新
+        if: steps.up.outputs.changed == 'false'
+        run: echo "已是最新内核 ${{ steps.up.outputs.tag }}，无需操作。"

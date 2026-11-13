@@ -1,0 +1,98 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 组装模块 zip
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/out && mkdir -p /tmp/out
+          # 不要用 -x '*.zip' 排包：zip 的通配符会跨目录匹配，
+          # 会连带把 binary/ca-certificates.zip 一起排除掉，
+          # 导致 customize.sh 解证书库失败、内核复制失败，模块装上却没有内核。
+          zip -rq /tmp/out/smartdns-android.zip . \
+            -x '.git/*' '.github/*' 'kernel.tag' 'kernel.version' '.gitattributes'
+          unzip -l /tmp/out/smartdns-android.zip | head -n 20
+          ls -lh /tmp/out/smartdns-android.zip
+
+          # 冒烟校验：缺这些文件刷入必失败
+          for f in module.prop customize.sh common/command.sh common/webui.sh \
+                   webroot/index.html binary/arm binary/arm64 \
+                   binary/ca-certificates.zip config/smartdns.conf; do
+            unzip -l /tmp/out/smartdns-android.zip | grep -q " $f\$" \
+              || { echo "::error::模块包缺少 $f"; exit 1; }
+          done
+          echo "模块包结构校验通过"
+
+      # 手动运行（无 tag）只产出构建产物，不发布 Release
+      - name: 上传构建产物
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartdns-android
+          path: /tmp/out/smartdns-android.zip
+          retention-days: 7
+
+      - name: 发布 Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/out/smartdns-android.zip
+          generate_release_notes: true
+          body: |
+            模块版本见 `module.prop`，内核版本见 `kernel.version`。
+
+            - KernelSU / MMRL：模块详情页 →「打开 WebUI」
+            - Magisk：需配合 KsuWebUIStandalone 或 MMRL 打开 WebUI
+          fail_on_unmatched_files: true
+
+  sync-updateinfo:
+    needs: build
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出默认分支
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: 由 module.prop 同步 updateinfo.json
+        run: |
+          set -euo pipefail
+          ver=$(grep '^version=' module.prop | cut -d= -f2-)
+          vc=$(grep '^versionCode=' module.prop | cut -d= -f2)
+          repo="${{ github.repository }}"
+          branch="${{ github.event.repository.default_branch }}"
+
+          {
+            printf '{\n'
+            printf '\t"version": "%s",\n' "$ver"
+            printf '\t"versionCode": %s,\n' "$vc"
+            printf '\t"zipUrl": "https://github.com/%s/releases/latest/download/smartdns-android.zip",\n' "$repo"
+            printf '\t"changelog": "https://github.com/%s/raw/%s/changelog.md"\n' "$repo" "$branch"
+            printf '}\n'
+          } > updateinfo.json
+          cat updateinfo.json
+
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updateinfo.json
+          if git diff --cached --quiet; then
+            echo 'updateinfo.json 无变化'
+            exit 0
+          fi
+          git commit -m "chore: 同步 updateinfo.json 至 ${ver} (${vc})"
+          git push

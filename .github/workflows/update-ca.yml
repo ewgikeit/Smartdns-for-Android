@@ -1,0 +1,53 @@
+name: Update CA Certificates
+
+on:
+  schedule:
+    # 每月 1 日 04:00 UTC 刷新根证书库（排在 Update Kernel 之后）
+    - cron: '0 4 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-ca
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 重新生成根证书库
+        run: sh scripts/update-ca.sh
+
+      - name: 校验产物
+        run: |
+          set -euo pipefail
+          unzip -l binary/ca-certificates.zip | grep -q 'CA/ca-certificates.crt' \
+            || { echo '::error::证书包缺少 CA/ca-certificates.crt'; exit 1; }
+          n=$(unzip -p binary/ca-certificates.zip CA/ca-certificates.crt | grep -c '^-----BEGIN CERTIFICATE-----' || true)
+          echo "包内证书数: $n"
+          [ "$n" -ge 60 ] || { echo '::error::证书数量异常'; exit 1; }
+          unzip -l binary/ca-certificates.zip | grep -q 'CA/.*\.crt' \
+            || { echo '::error::证书包缺少单证书文件'; exit 1; }
+
+      - name: 提交变更
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- binary/ca-certificates.zip binary/CA_VERSION; then
+            echo '根证书库无变化，跳过提交'
+            exit 0
+          fi
+
+          vc=$(grep '^versionCode=' module.prop | cut -d= -f2)
+          sed -i "s/^versionCode=.*/versionCode=$((vc + 1))/" module.prop
+
+          stamp=$(cat binary/CA_VERSION)
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add binary/ca-certificates.zip binary/CA_VERSION module.prop
+          git commit -m "chore: 更新根证书库（Mozilla ${stamp}）"
+          git push

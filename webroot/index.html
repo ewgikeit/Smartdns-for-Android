@@ -1,0 +1,2007 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>SmartDNS 控制台</title>
+<style>
+:root{
+  --bg:#f4f6fa; --card:#fff; --text:#151a21; --dim:#6b7480; --line:#e3e8ef;
+  --accent:#2f6fed; --accent-soft:#e8f0fe; --ok:#12a150; --ok-soft:#e6f6ec;
+  --warn:#b45309; --warn-soft:#fdf3e3; --danger:#d92d20; --danger-soft:#fdeceb;
+  --code:#f7f9fc; --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.05);
+  --r:14px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0e1116; --card:#161b22; --text:#e6edf3; --dim:#8b95a3; --line:#262d38;
+    --accent:#5b9dff; --accent-soft:#18263c; --ok:#3fb950; --ok-soft:#132a1b;
+    --warn:#d29922; --warn-soft:#2b2313; --danger:#f85149; --danger-soft:#2d1618;
+    --code:#0d1117; --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text)}
+body{
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom));
+  -webkit-text-size-adjust:100%;
+}
+h1,h2,h3,p{margin:0}
+a{color:var(--accent);text-decoration:none}
+
+.wrap{max-width:760px;margin:0 auto;padding:0 14px}
+
+/* 顶部 */
+header{
+  position:sticky;top:0;z-index:20;background:var(--bg);
+  padding:calc(14px + env(safe-area-inset-top)) 0 10px;
+  border-bottom:1px solid var(--line);
+}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.logo{
+  width:34px;height:34px;border-radius:10px;flex:0 0 auto;
+  background:linear-gradient(135deg,#2f6fed,#5b9dff);
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-weight:700;font-size:16px;letter-spacing:-.5px;
+}
+.brand .bt{min-width:0;flex:1 1 auto}
+.brand h1{
+  font-size:17px;font-weight:650;letter-spacing:-.2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.brand .sub{
+  font-size:12px;color:var(--dim);margin-top:-2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.state{
+  margin-left:auto;flex:0 0 auto;white-space:nowrap;
+  display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);
+}
+.dot{width:8px;height:8px;border-radius:50%;background:#9aa4b2}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.dot.err{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
+
+/* 标签栏 */
+nav{display:flex;gap:6px;overflow-x:auto;padding:10px 0 0;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{
+  flex:0 0 auto;border:1px solid transparent;background:transparent;color:var(--dim);
+  padding:7px 14px;border-radius:999px;font-size:14px;font-weight:550;cursor:pointer;
+}
+nav button.active{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+
+main{padding-top:16px}
+.view{display:none}
+.view.active{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* 卡片 */
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:16px;box-shadow:var(--shadow);margin-bottom:12px;
+}
+.card>h2{font-size:14px;font-weight:650;margin-bottom:2px}
+.card>.desc{font-size:12.5px;color:var(--dim);margin-bottom:12px}
+
+/* 状态概览 */
+.hero{display:flex;align-items:center;gap:14px}
+.hero .ring{
+  width:52px;height:52px;border-radius:50%;flex:0 0 auto;display:flex;
+  align-items:center;justify-content:center;background:var(--accent-soft);
+}
+.hero .ring span{width:18px;height:18px;border-radius:50%;background:#9aa4b2;transition:.2s}
+.hero.on .ring{background:var(--ok-soft)}
+.hero.on .ring span{background:var(--ok)}
+.hero h2{font-size:18px;font-weight:680;letter-spacing:-.2px}
+.hero .meta{font-size:12.5px;color:var(--dim)}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-radius:12px;overflow:hidden;margin-top:14px}
+.grid .cell{background:var(--card);padding:11px 12px}
+.grid .cell .k{font-size:11.5px;color:var(--dim)}
+.grid .cell .v{font-size:14.5px;font-weight:600;margin-top:1px;word-break:break-all}
+
+/* 按钮 */
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;align-items:center}
+.logbar{margin:0 0 10px}
+.logbar-sw{display:flex;align-items:center;gap:8px;margin-left:auto;flex:0 0 auto}
+.logbar-sw .note{font-size:12.5px;color:var(--dim);white-space:nowrap}
+.btn{
+  border:1px solid var(--line);background:var(--card);color:var(--text);
+  padding:9px 16px;border-radius:10px;font-size:14px;font-weight:550;cursor:pointer;
+  transition:.15s;display:inline-flex;align-items:center;gap:6px;
+}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:var(--danger);border-color:var(--danger-soft);background:var(--danger-soft)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--accent);padding-left:8px;padding-right:8px}
+.btn.sm{padding:6px 12px;font-size:13px;border-radius:9px}
+
+/* 表单 */
+.field{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.field:last-child{border-bottom:none}
+.field .label{flex:1 1 auto;min-width:0}
+.field .label .t{font-size:14px;font-weight:550}
+.field .label .h{font-size:12px;color:var(--dim);margin-top:1px}
+.field input[type=text],.field input[type=number],.field select{
+  flex:0 0 auto;width:132px;padding:8px 10px;border-radius:9px;border:1px solid var(--line);
+  background:var(--code);color:var(--text);font-size:14px;font-family:inherit;
+}
+.field input:focus,.field select:focus,.editor:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.field.wide{display:block}
+.field.wide input{width:100%;margin-top:8px}
+
+/* 开关：尺寸由 --sh（轨道高）/ --sp（内边距）驱动，圆钮不会按固定像素错位 */
+.switch{position:relative;width:46px;height:27px;flex:0 0 auto;--sh:27px;--sp:3px}
+.switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}
+.switch i{
+  position:absolute;inset:0;border-radius:999px;background:#c7ced9;transition:.18s;
+}
+.switch i::after{
+  content:'';position:absolute;top:var(--sp);left:var(--sp);
+  width:calc(var(--sh) - var(--sp) * 2);height:calc(var(--sh) - var(--sp) * 2);
+  border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.25);
+}
+.switch input:checked + i{background:var(--accent)}
+.switch input:checked + i::after{left:calc(100% - var(--sh) + var(--sp))}
+.switch.sm{--sh:23px;width:40px;height:23px}
+
+/* 编辑器 */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.editor{
+  width:100%;min-height:58vh;padding:12px;border-radius:12px;border:1px solid var(--line);
+  background:var(--code);color:var(--text);font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  resize:vertical;tab-size:2;
+}
+.hintline{font-size:12px;color:var(--dim);margin-top:8px;word-break:break-all}
+
+pre.log{
+  margin:0;padding:12px;border-radius:12px;background:var(--code);border:1px solid var(--line);
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  max-height:62vh;overflow:auto;white-space:pre-wrap;word-break:break-all;color:var(--text);
+}
+pre.log:empty::before{content:'（暂无内容）';color:var(--dim)}
+
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.seg button{
+  border:1px solid var(--line);background:var(--card);color:var(--dim);border-radius:9px;
+  padding:6px 12px;font-size:13px;cursor:pointer;
+}
+.seg button.on{background:var(--accent-soft);color:var(--accent);border-color:transparent;font-weight:600}
+
+/* 关于 */
+.kv{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--dim);flex:0 0 auto}
+.kv .v{text-align:right;word-break:break-all;font-weight:550}
+
+.banner{
+  background:var(--warn-soft);color:var(--warn);border:1px solid transparent;
+  border-radius:12px;padding:12px 14px;font-size:13px;margin-bottom:12px;display:none;
+}
+.banner.show{display:block}
+.banner b{font-weight:650}
+
+/* 提示条 */
+#toast{
+  position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));transform:translate(-50%,20px);
+  background:#1f2630;color:#fff;padding:11px 18px;border-radius:11px;font-size:13.5px;
+  opacity:0;pointer-events:none;transition:.22s;max-width:86vw;text-align:center;z-index:99;
+  box-shadow:0 8px 28px rgba(0,0,0,.28);
+}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#toast.err{background:var(--danger)}
+
+/* 弹窗 */
+.mask{
+  position:fixed;inset:0;background:rgba(9,12,17,.5);display:none;align-items:center;
+  justify-content:center;padding:24px;z-index:100;
+}
+.mask.show{display:flex}
+.dialog{
+  background:var(--card);border-radius:16px;padding:20px;max-width:340px;width:100%;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+.dialog h3{font-size:16px;font-weight:650;margin-bottom:6px}
+.dialog p{font-size:13.5px;color:var(--dim);white-space:pre-wrap;max-height:40vh;overflow:auto}
+.dialog .actions{justify-content:flex-end;margin-top:18px}
+
+/* 规则源列表 */
+.mstat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:2px 0 8px}
+.mstat div{background:var(--code);border:1px solid var(--line);border-radius:11px;padding:10px 4px;text-align:center}
+.mstat b{display:block;font-size:19px;font-weight:650;letter-spacing:-.3px;font-variant-numeric:tabular-nums}
+.mstat span{display:block;margin-top:3px;font-size:11.5px;color:var(--dim)}
+.frm .row select{flex:0 0 auto;width:auto;min-width:82px}
+.rsrc{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
+.rsrc.off .rname,.rsrc.off .rurl,.rsrc.off .rmeta{opacity:.55}
+.rsrc .rhead{display:flex;align-items:flex-start;gap:10px}
+.rsrc .rname{font-size:14.5px;font-weight:650;word-break:break-all;line-height:1.35}
+.rsrc .rurl{font-size:12px;color:var(--dim);word-break:break-all;margin-top:3px;line-height:1.45}
+.rsrc .rmeta{display:flex;flex-wrap:wrap;gap:3px 10px;font-size:12px;color:var(--dim);margin-top:8px}
+.rsrc .rfoot{display:flex;gap:7px;margin-top:11px;flex-wrap:wrap}
+.tag{display:inline-block;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;
+  background:var(--accent-soft);color:var(--accent);vertical-align:2px;line-height:1.7}
+.tag.gray{background:transparent;color:var(--dim);border:1px solid var(--line)}
+.st{display:inline-flex;align-items:center;gap:5px}
+.st i{width:6px;height:6px;border-radius:50%;background:#9aa4b2;flex:0 0 auto}
+.st.ok{color:var(--ok)} .st.ok i{background:var(--ok)}
+.st.fail{color:var(--danger)} .st.fail i{background:var(--danger)}
+.st.pending{color:var(--warn)} .st.pending i{background:var(--warn)}
+
+/* 底部弹出式表单（手机上是抽屉，桌面上是居中弹窗） */
+.mask.sheet{align-items:flex-end;padding:0}
+.sheetbox{
+  background:var(--card);width:100%;max-width:480px;max-height:92vh;overflow:auto;
+  border-radius:16px 16px 0 0;padding:18px 18px calc(16px + env(safe-area-inset-bottom));
+  box-shadow:0 -10px 40px rgba(0,0,0,.25);
+}
+.sheetbox h3{font-size:16px;font-weight:650;margin-bottom:2px}
+.sheetbox .sub{font-size:12.5px;color:var(--dim);margin-bottom:14px}
+.frm{display:grid;gap:13px}
+.frm .lb{font-size:12.5px;color:var(--dim);margin-bottom:6px;display:block}
+.frm input[type=text],.frm input[type=number],.frm input[type=time],.frm select{
+  width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--code);color:var(--text);font-size:14.5px;font-family:inherit;
+  -webkit-appearance:none;appearance:none;
+}
+.frm select{background-image:none}
+.frm input:focus,.frm select:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.frm input:disabled{opacity:.55}
+.frm .tip{font-size:11.5px;color:var(--dim);margin-top:6px;line-height:1.55}
+.frm .err{color:var(--danger);font-size:12.5px;margin-top:8px;display:none}
+.frm .err.show{display:block}
+.frm .row{display:flex;gap:8px;align-items:center}
+.frm .row input[type=number],.frm .row input[type=time]{flex:0 0 118px}
+.frm .row .unit{font-size:13px;color:var(--dim);flex:0 0 auto}
+.frm .swrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+@media(min-width:520px){
+  .mask.sheet{align-items:center;padding:24px}
+  .sheetbox{border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">SD</div>
+      <div class="bt">
+        <h1>SmartDNS 控制台</h1>
+        <div class="sub" id="headSub">正在读取模块信息…</div>
+      </div>
+      <div class="state"><i class="dot" id="headDot"></i><span id="headState">未连接</span></div>
+    </div>
+    <nav>
+      <button class="active" data-tab="status">状态</button>
+      <button data-tab="params">运行参数</button>
+      <button data-tab="config">DNS 配置</button>
+      <button data-tab="rules">规则</button>
+      <button data-tab="logs">日志</button>
+      <button data-tab="about">关于</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="banner" id="envBanner"></div>
+
+  <!-- 状态 -->
+  <section class="view active" id="view-status">
+    <div class="card">
+      <div class="hero" id="hero">
+        <div class="ring"><span></span></div>
+        <div>
+          <h2 id="heroTitle">读取中…</h2>
+          <div class="meta" id="heroMeta">&nbsp;</div>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="cell"><div class="k">运行模式</div><div class="v" id="sMode">-</div></div>
+        <div class="cell"><div class="k">主 / 次端口</div><div class="v" id="sPort">-</div></div>
+        <div class="cell"><div class="k">防火墙规则</div><div class="v" id="sIpt">-</div></div>
+        <div class="cell"><div class="k">内核版本</div><div class="v" id="sVer">-</div></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btnStart">启动</button>
+        <button class="btn" id="btnStop">停止</button>
+        <button class="btn" id="btnRestart">重启</button>
+        <button class="btn danger" id="btnClean">清理规则</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>说明</h2>
+      <div class="desc" style="margin-bottom:0">
+        修改运行参数或 DNS 配置后需要<strong>重启</strong>才能生效。若开机后服务异常，可先点“清理规则”再“启动”。
+      </div>
+    </div>
+  </section>
+
+  <!-- 运行参数 -->
+  <section class="view" id="view-params">
+    <div class="card">
+      <h2>监听与模式</h2>
+      <div class="desc">对应 /data/adb/smartdns/config/script_conf.sh</div>
+      <div class="field">
+        <div class="label"><div class="t">主监听端口</div><div class="h">处理本机 DNS 流量</div></div>
+        <input type="number" id="pMain" min="1" max="65535" inputmode="numeric">
+      </div>
+      <div class="field">
+        <div class="label"><div class="t">次监听端口</div><div class="h">代理模式使用，留空则同主端口</div></div>
+        <input type="number" id="pSecond" min="1" max="65535" inputmode="numeric" placeholder="跟随主端口">
+      </div>
+      <div class="field">
+        <div class="label"><div class="t">工作模式</div><div class="h">决定 iptables 重定向方式</div></div>
+        <select id="pMode">
+          <option value="local">local（仅本机）</option>
+          <option value="proxy">proxy（局域网代理）</option>
+          <option value="local,proxy">local,proxy（两者）</option>
+          <option value="server">server（仅启动服务）</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>放行与拦截</h2>
+      <div class="desc">满足条件的流量不会被重定向到 SmartDNS</div>
+      <div class="field">
+        <div class="label"><div class="t">放行 VPN（tun+）</div><div class="h">避免与代理类应用抢 DNS</div></div>
+        <label class="switch"><input type="checkbox" id="pTun"><i></i></label>
+      </div>
+      <div class="field">
+        <div class="label"><div class="t">放行 Wi-Fi（wlan+）</div></div>
+        <label class="switch"><input type="checkbox" id="pWlan"><i></i></label>
+      </div>
+      <div class="field">
+        <div class="label"><div class="t">放行移动数据（rmnet_data+）</div></div>
+        <label class="switch"><input type="checkbox" id="pData"><i></i></label>
+      </div>
+      <div class="field">
+        <div class="label"><div class="t">封锁本机 IPv6 的 53 端口</div><div class="h">内核不支持 ip6tables NAT 时建议开启</div></div>
+        <label class="switch"><input type="checkbox" id="pIp6"><i></i></label>
+      </div>
+      <div class="field wide">
+        <div class="label"><div class="t">放行应用</div><div class="h">包名或 UID，用空格分隔</div></div>
+        <input type="text" id="pPkg" placeholder="com.github.kr328.clash com.v2ray.ang">
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>其他</h2>
+      <div class="field">
+        <div class="label"><div class="t">记录脚本运行日志</div><div class="h">写入模块目录 script.log</div></div>
+        <label class="switch"><input type="checkbox" id="pLog"><i></i></label>
+      </div>
+      <div class="field">
+        <div class="label"><div class="t">命令行语言</div><div class="h">以 root 执行 smartdns 命令时的提示语言</div></div>
+        <select id="pLang">
+          <option value="zh-CN">简体中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="btnSaveParams">保存参数</button>
+        <button class="btn" id="btnReloadParams">重新载入</button>
+      </div>
+      <div class="hintline">保存后需回到「状态」页重启服务才会生效。</div>
+    </div>
+  </section>
+
+  <!-- DNS 配置 -->
+  <section class="view" id="view-config">
+    <div class="card">
+      <h2>smartdns.conf</h2>
+      <div class="desc">直接编辑内核配置文件，保存前会自动备份上一版</div>
+      <div class="toolbar">
+        <button class="btn sm primary" id="btnSaveConf">保存</button>
+        <button class="btn sm" id="btnReloadConf">重新载入</button>
+        <button class="btn sm" id="btnTestConf">测试配置</button>
+        <button class="btn sm" id="btnRestoreConf">还原备份</button>
+        <button class="btn sm danger" id="btnFactoryConf">恢复出厂</button>
+      </div>
+      <textarea class="editor" id="confEditor" spellcheck="false" wrap="off"></textarea>
+      <div class="hintline" id="confHint">—</div>
+    </div>
+  </section>
+
+  <!-- 规则 -->
+  <section class="view" id="view-rules">
+    <div class="card">
+      <h2>合并结果</h2>
+      <div class="mstat">
+        <div><b id="msKept">–</b><span>合并后条数</span></div>
+        <div><b id="msRaw">–</b><span>合并前</span></div>
+        <div><b id="msDrop">–</b><span>去除重复</span></div>
+      </div>
+      <div class="desc" id="msMeta" style="margin-bottom:0">正在读取…</div>
+    </div>
+
+    <div class="card">
+      <h2>规则源</h2>
+      <div class="desc">
+        每条订阅都能单独设置地址、更新时间和启停。转换结果写入 <code>config/rules/</code>，
+        由内核启动时加载 —— 这里的增删改会自动重建索引并重载内核。
+      </div>
+      <div class="actions" style="margin:0 0 2px">
+        <button class="btn sm primary" id="btnRuleAdd">＋ 添加规则源</button>
+        <button class="btn sm" id="btnRulesAll">全部更新</button>
+        <button class="btn sm" id="btnRulesLog">更新日志</button>
+        <span id="rulesHint" style="color:var(--dim);font-size:13px"></span>
+      </div>
+      <div id="rulesList"></div>
+      <div class="hintline">带「内置」标记的源随模块下发，可以停用，不能删除。</div>
+    </div>
+
+    <div class="card">
+      <h2>自定义 hosts</h2>
+      <div class="desc">
+        域名 → IP 的固定映射，优先级高于订阅解析。格式与系统 hosts 一致：
+        <code>IP 域名 [域名…]</code>，<code>0.0.0.0 域名</code> 表示屏蔽。
+      </div>
+      <textarea class="editor" id="rulesHosts" rows="9" spellcheck="false"
+        placeholder="192.168.1.10 nas.lan nas&#10;0.0.0.0 ads.example.com"></textarea>
+      <div class="actions">
+        <button class="btn sm" id="btnHostsSave">保存并生效</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>自定义黑名单 / 白名单</h2>
+      <div class="desc">
+        黑名单：域名直接返回空地址（屏蔽）。白名单：只走国内解析组。一行一个域名。
+      </div>
+      <div class="seg" id="rulesUserSeg">
+        <button class="on" data-ufile="block">黑名单</button>
+        <button data-ufile="allow">白名单</button>
+      </div>
+      <textarea class="editor" id="rulesUser" rows="9" spellcheck="false"></textarea>
+      <div class="actions">
+        <button class="btn sm" id="btnUserSave">保存并生效</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="view" id="view-logs">
+    <div class="card">
+      <h2>日志</h2>
+      <div class="desc">日志由内核按配置生成：服务日志需要 <code>log-file</code>，审计日志需要 <code>audit-enable yes</code>。服务起不来时先看「内核输出」。</div>
+      <div class="seg" id="logSeg">
+        <button class="on" data-log="server.log">服务日志</button>
+        <button data-log="audit.log">审计日志</button>
+        <button data-log="core.log">内核输出</button>
+        <button data-log="script.log">脚本日志</button>
+        <button data-log="boot.log">开机日志</button>
+      </div>
+      <div class="seg" id="lineSeg">
+        <button data-lines="100">100 行</button>
+        <button class="on" data-lines="300">300 行</button>
+        <button data-lines="1000">1000 行</button>
+      </div>
+      <div class="actions logbar">
+        <button class="btn sm" id="btnRefreshLog">刷新</button>
+        <span class="logbar-sw">
+          <span class="note">自动刷新</span>
+          <label class="switch sm"><input type="checkbox" id="autoLog"><i></i></label>
+        </span>
+      </div>
+      <pre class="log" id="logBox"></pre>
+    </div>
+  </section>
+
+  <!-- 关于 -->
+  <section class="view" id="view-about">
+    <div class="card">
+      <h2>版本信息</h2>
+      <div id="aboutList" style="margin-top:8px"></div>
+      <div class="actions">
+        <button class="btn sm" id="btnCheckUpstream">检查上游版本</button>
+        <button class="btn sm" id="btnDiag">桥接诊断</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>相关链接</h2>
+      <div class="kv"><span class="k">SmartDNS 内核</span><span class="v"><a href="https://github.com/pymumu/smartdns" target="_blank">pymumu/smartdns</a></span></div>
+      <div class="kv"><span class="k">内核配置文档</span><span class="v"><a href="https://pymumu.github.io/smartdns/" target="_blank">pymumu.github.io/smartdns</a></span></div>
+      <div class="kv"><span class="k">本模块</span><span class="v"><a id="repoLink" href="#" target="_blank">—</a></span></div>
+    </div>
+    <div class="card">
+      <h2>提示</h2>
+      <div class="desc" style="margin-bottom:0">
+        本页面通过模块自带的 <code>webui.sh</code> 以 root 身份读写配置，操作范围仅限
+        <code>/data/adb/smartdns</code> 下的白名单文件。修改前建议先在「DNS 配置」页备份。
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<div class="mask" id="mask">
+  <div class="dialog">
+    <h3 id="dlgTitle">提示</h3>
+    <p id="dlgText"></p>
+    <div class="actions">
+      <button class="btn" id="dlgCancel">取消</button>
+      <button class="btn primary" id="dlgOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 规则源：添加 / 设置 -->
+<div class="mask sheet" id="ruleMask">
+  <div class="sheetbox">
+    <h3 id="ruleTitle">添加规则源</h3>
+    <div class="sub" id="ruleSub">订阅一个在线规则表，或指向设备上的本地文件。</div>
+    <div class="frm">
+      <div>
+        <label class="lb" for="rfId">名称</label>
+        <input type="text" id="rfId" placeholder="例如 my-ads" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="tip" id="rfIdTip">只能用字母、数字、连字符和下划线，同时作为生成的文件名。</div>
+      </div>
+      <div>
+        <label class="lb" for="rfType">类型</label>
+        <select id="rfType"></select>
+        <div class="tip" id="rfTypeTip"></div>
+      </div>
+      <div>
+        <label class="lb" for="rfUrl">地址</label>
+        <input type="text" id="rfUrl" placeholder="https://example.com/list.txt" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="tip">支持 https:// 链接、<code>system</code>（读系统 hosts）、<code>seed/文件名</code> 或 <code>/绝对路径</code>。</div>
+      </div>
+      <div>
+        <label class="lb">更新时间</label>
+        <div class="seg" id="rfSched" style="margin-bottom:9px">
+          <button type="button" data-mode="manual">仅手动</button>
+          <button type="button" data-mode="hours">每隔几小时</button>
+          <button type="button" data-mode="daily">每天</button>
+          <button type="button" data-mode="weekly">每周</button>
+          <button type="button" data-mode="monthly">每月</button>
+        </div>
+        <div class="row" id="rfHoursWrap" style="display:none">
+          <span class="unit">每</span>
+          <input type="number" id="rfHours" min="1" max="720" step="1" value="6" inputmode="numeric">
+          <span class="unit">小时更新一次</span>
+        </div>
+        <div class="row" id="rfWhenWrap" style="display:none">
+          <span class="unit" id="rfWhenPre">每天</span>
+          <select id="rfWeekday" style="display:none"></select>
+          <select id="rfDom" style="display:none"></select>
+          <span class="unit" id="rfWhenSuffix" style="display:none">日</span>
+          <input type="time" id="rfTime" value="06:00">
+          <span class="unit">更新</span>
+        </div>
+        <div class="tip" id="rfSchedTip"></div>
+      </div>
+      <div class="swrow">
+        <div>
+          <div class="lb" style="margin:0">启用</div>
+          <div class="tip" style="margin-top:2px">停用后不再自动更新，已生成的规则仍会生效。</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="rfEnabled" checked><i></i></label>
+      </div>
+    </div>
+    <div class="err" id="rfErr"></div>
+    <div class="actions">
+      <button class="btn" id="ruleCancel">取消</button>
+      <button class="btn primary" id="ruleSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* ---------- 桥接层：KernelSU / APatch / Magisk / MMRL ---------- */
+// 各管理器的 exec 签名并不一致：
+//   KernelSU / APatch: ksu.exec(cmd, options, callback)  —— 回调式，无返回值
+//   Magisk（部分版本）:  同样暴露 window.ksu，但 exec(cmd) 直接同步返回 stdout
+//   MMRL:               $mmrl.exec(cmd)                  —— 返回 Promise
+// 老代码统一写 Promise.resolve(api.exec(cmd))，回调式实现在这里会立刻 resolve
+// 成 undefined，于是每个动作都被当成"成功但输出为空"：状态页读不到数据、
+// 控制按钮全部落到「未知错误」。下面按实际能力探测后再调用。
+// 注意：不要用"存在 window.ksu"来判定是 KernelSU —— Magisk 也提供这个兼容对象，
+// 真实管理器由 webui.sh info 的 manager= 字段给出。
+var bridge = null;
+var execVariant = null;   // 0: (cmd, cb)   1: (cmd, opts, cb)   2: (cmd) 同步返回
+var initPromise = null;
+var bridgeDiag = { obj: '未检测到', variant: '-', manager: '', retries: 0, lastFail: '' };
+
+var VARIANT_LABEL = {
+  0: '回调 exec(cmd, callback)',
+  1: '回调 exec(cmd, options, callback)',
+  2: '同步返回 exec(cmd)'
+};
+
+function norm(r) {
+  if (r == null) return { errno: 0, stdout: '', stderr: '' };
+  if (Array.isArray(r)) {
+    return { errno: Number(r[0]) || 0, stdout: str(r[1]), stderr: str(r[2]) };
+  }
+  if (typeof r === 'string') return { errno: 0, stdout: r, stderr: '' };
+  return {
+    errno: Number(r.errno != null ? r.errno : (r.code != null ? r.code : 0)) || 0,
+    stdout: str(r.stdout),
+    stderr: str(r.stderr)
+  };
+}
+
+function str(v) { return v == null ? '' : String(v); }
+
+function detectBridge() {
+  if (bridge) return bridge;
+  // 只记录"用了哪个全局对象"，不代表管理器是谁
+  var ksu = window.ksu;
+  if (ksu && typeof ksu.exec === 'function') {
+    bridge = { name: 'window.ksu', api: function () { return ksu.exec.apply(ksu, arguments); } };
+    bridgeDiag.obj = 'window.ksu';
+    return bridge;
+  }
+  var mm = window.$mmrl || window.mmrl || window.MMRL;
+  if (mm && typeof mm.exec === 'function') {
+    bridge = { name: '$mmrl', api: function () { return mm.exec.apply(mm, arguments); } };
+    bridgeDiag.obj = '$mmrl';
+    return bridge;
+  }
+  return null;
+}
+
+// 按指定参数形态执行一次命令。三种形态都要能接住：
+//   0: exec(cmd, cb)          回调式（KernelSU / APatch）
+//   1: exec(cmd, opts, cb)    回调式，带 options
+//   2: exec(cmd)              同步返回字符串 / Promise（部分 Magisk 版本、MMRL）
+// noWait=true 时，若没有拿到立即可用的返回值就马上放弃，不空等回调。
+function rawExec(cmd, variant, timeoutMs, noWait) {
+  return new Promise(function (resolve, reject) {
+    var settled = false, timer = null;
+    function ok(v) {
+      if (settled) return;
+      settled = true; if (timer) clearTimeout(timer); resolve(norm(v));
+    }
+    function no(e) {
+      if (settled) return;
+      settled = true; if (timer) clearTimeout(timer);
+      reject(e instanceof Error ? e : new Error(String(e)));
+    }
+    var ms = (timeoutMs == null) ? 20000 : timeoutMs;
+    if (ms > 0) {
+      timer = setTimeout(function () {
+        no(new Error('执行超时：' + Math.round(ms / 1000) + ' 秒内没有返回结果'));
+      }, ms);
+    }
+
+    // 回调形态也不完全统一：多数是 (errno, stdout, stderr)，个别实现直接回一个对象或字符串
+    var cb = function (a, b, c) {
+      if (a && typeof a === 'object') return ok(a);
+      if (typeof a === 'string' && b === undefined && c === undefined) {
+        return ok({ errno: 0, stdout: a, stderr: '' });
+      }
+      ok({ errno: a, stdout: b, stderr: c });
+    };
+    var ret;
+    try {
+      if (variant === 1) ret = bridge.api(cmd, {}, cb);
+      else if (variant === 2) ret = bridge.api(cmd);
+      else ret = bridge.api(cmd, cb);
+    } catch (e) {
+      return no(e);
+    }
+    if (ret && typeof ret.then === 'function') {
+      bridgeDiag.promise = true;
+      ret.then(ok, no);
+      return;
+    }
+    if (typeof ret === 'string' || Array.isArray(ret) || (ret && typeof ret === 'object')) {
+      return ok(ret);
+    }
+    if (noWait) return no(new Error('no-sync-return'));
+    // 否则等回调把结果送回来
+  });
+}
+
+// 用无害命令试探哪种参数形态可用，只做一次。
+// 先试同步形态（能立刻判断成败，不浪费等待），再退到两种回调形态。
+function probeExec() {
+  var probe = 'echo webui-probe-ok';
+  bridgeDiag.promise = false;
+  function tryVariant(v, timeout, noWait) {
+    return rawExec(probe, v, timeout, noWait).then(function (r) {
+      if (String(r.stdout).indexOf('webui-probe-ok') >= 0) return v;
+      throw new Error('empty');
+    });
+  }
+  return tryVariant(2, 0, true)
+    .catch(function () { return tryVariant(0, 2500); })
+    .catch(function () { return tryVariant(1, 2500); })
+    .then(function (v) {
+      execVariant = v;
+      bridgeDiag.variant = (v === 2 && bridgeDiag.promise)
+        ? 'Promise 返回 exec(cmd)'
+        : VARIANT_LABEL[v];
+    })
+    .catch(function () {
+      throw new Error(
+        '桥接不可用：' + (bridge ? bridge.name : '未知') + ' 的 exec 没能执行任何命令。' +
+        '请从模块管理器的「打开 WebUI」进入，或把「关于 → 桥接诊断」的内容反馈给作者。');
+    });
+}
+
+function ready() {
+  if (!detectBridge()) {
+    return Promise.reject(new Error('当前页面不在模块管理器的 WebUI 环境中打开，无法执行 root 命令。'));
+  }
+  if (execVariant != null) return Promise.resolve();
+  if (!initPromise) {
+    initPromise = probeExec().catch(function (e) { initPromise = null; throw e; });
+  }
+  return initPromise;
+}
+
+// 所有桥接调用串行排队。
+// 后台每 5 秒轮询一次状态，用户点按钮时很可能正好撞上一次轮询在飞——
+// 而这类 exec 桥在并发时容易把回包串台（A 拿到 B 的结果）。串行之后就不会
+// 再有"点击和轮询互相抢回包"的情况，配合流水号校验基本杜绝首次点击失败。
+var execChain = Promise.resolve();
+var inflight = 0;
+
+function run(cmd, timeoutMs) {
+  var task = execChain.then(function () {
+    inflight++;
+    return ready()
+      .then(function () { return rawExec(cmd, execVariant, timeoutMs); })
+      .then(function (v) { inflight--; return v; },
+            function (e) { inflight--; throw e; });
+  });
+  execChain = task.then(function () {}, function () {});
+  return task;
+}
+
+function busy() { return inflight > 0; }
+
+/* ---------- 传输层：把多行输出压成单行 base64 ----------
+ * 实测 Magisk 31.1 的 exec(cmd)：只回传 stdout 的**最后一行**。
+ * 于是 `webui.sh info` 只剩末尾的 ok=1、`status` 只剩 script_conf=...，
+ * 所有多行 KEY=VALUE 都解析失败 → 状态页「读取失败」、按钮「未知错误」。
+ * 不管哪个管理器，把输出 base64 成一行再本地解码都能拿到完整内容。
+ *
+ * 3.4.0 再加一层：每次调用带一个**唯一流水号**（nonce），回包头部必须原样带回。
+ * 实测存在「第一次调用拿到的是上一次调用的输出 / 空串」这类时序问题——表现就是
+ * WebUI 里每个按钮首次点击必失败、再点一次又正常。带流水号后这种情况能被识别出来
+ * 并自动重试，用户不再需要点两遍。
+ */
+var MAGIC = 'SDNS1';
+var callSeq = 0;
+var MAX_TRY = 3;
+
+function wrapSingle(inner, nonce) {
+  // 头部 = 魔数 + 流水号，尾部 = 退出码，两者一起用于判定回包是否属于本次调用
+  return '{ echo "' + MAGIC + ':' + nonce + '"; ' + inner + '; echo "__sdns_rc=$?"; } 2>&1 | base64 | tr -d "\\n"';
+}
+
+function unpack(raw, nonce) {
+  var s = str(raw).trim();
+  var out = { rc: 0, body: '', decoded: false, corrupt: false, stale: false, hasRc: false, valid: false, raw: s };
+  if (!s) return out;
+  var text = s;
+  var looksB64 = /^[A-Za-z0-9+\/=]+$/.test(s);
+  if (looksB64 && s.length % 4 === 0) {
+    try { text = b64ToText(s); out.decoded = true; } catch (e) { text = s; out.decoded = false; }
+  } else if (looksB64) {
+    // 纯 base64 字符但不整除 4：只可能是被截断了
+    out.corrupt = true;
+    out.body = s;
+    return out;
+  }
+  if (out.decoded) {
+    if (text.indexOf(MAGIC) !== 0) { out.corrupt = true; out.body = text; return out; }
+    var nl = text.indexOf('\n');
+    if (nl < 0) { out.corrupt = true; out.body = text; return out; }   // 头部之后就断了
+    var head = text.slice(MAGIC.length, nl);                            // ":<nonce>"
+    if (nonce && head !== ':' + nonce) { out.stale = true; out.corrupt = true; out.body = text; return out; }
+    text = text.slice(nl + 1);
+  }
+  var m = /(?:^|\n)__sdns_rc=(\d+)\s*$/.exec(text);
+  if (m) {
+    out.rc = Number(m[1]);
+    out.hasRc = true;
+    out.body = text.slice(0, m.index);
+  } else {
+    out.body = text;
+  }
+  out.valid = out.decoded && !out.corrupt && out.hasRc;
+  return out;
+}
+
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// 执行一条命令并拿回完整的多行输出（含退出码）。
+// 回包不属于本次调用（空串 / 上一次调用的残留 / 被截断）时自动重试，
+// 最多 3 次；仍然失败才报错，并把最后一次的原始回包片段带上，方便排查。
+function runText(inner, timeoutMs) {
+  var attempt = 0;
+  // 重试必须沿用同一个流水号：某些环境里 exec 的回包会"慢一拍"——
+  // 本次调用拿到的是上一次调用的输出。流水号不变，下一次重试正好把这一拍的
+  // 结果取回来；每轮换新流水号反而永远对不上（实测过，会一直失败到超时）。
+  var nonce = (++callSeq).toString(36) + Math.random().toString(36).slice(2, 6);
+  function once() {
+    attempt++;
+    return run(wrapSingle(inner, nonce), timeoutMs).then(function (r) {
+      var u = unpack(r.stdout, nonce);
+      if (u.valid) {
+        bridgeDiag.retries = (bridgeDiag.retries || 0) + (attempt - 1);
+        return u;
+      }
+      var why = !u.raw ? '空输出'
+        : u.stale ? '回包不是本次请求（可能是上一次调用的结果）'
+        : u.corrupt ? '回包被截断或无法解码'
+        : !u.decoded ? '回包不是单行 base64'
+        : '回包里没有退出码';
+      if (attempt >= MAX_TRY) {
+        throw new Error('执行通道异常：连续 ' + attempt + ' 次没有拿到有效回包（' + why +
+          '；最后一次 ' + u.raw.length + ' 字节：' + (u.raw.slice(0, 80) || '空') + '）。' +
+          '请重试一次；若持续出现，请打开「关于 → 桥接诊断」反馈。');
+      }
+      bridgeDiag.lastFail = why;
+      return delay(120).then(once);
+    });
+  }
+  return once();
+}
+
+// 后端字段可能是 base64（文件内容），也可能是一段普通文本（错误/提示）。
+// 以前一律当 base64 解，遇到中文提示就会抛 atob 异常，把真正的错误信息埋在
+// “The string to be decoded contains characters outside of the Latin1 range”里。
+function b64ish(s) {
+  var t = String(s == null ? '' : s).replace(/\s+/g, '');
+  return t.length > 0 && t.length % 4 === 0 && /^[A-Za-z0-9+\/=]+$/.test(t);
+}
+
+function asText(v) {
+  var s = String(v == null ? '' : v);
+  if (!b64ish(s)) return s;
+  try { return b64ToText(s); } catch (e) { return s; }
+}
+
+var MODDIR = '';
+var state = { tab: 'status', logName: 'server.log', logLines: 300, timer: null, logTimer: null };
+
+function q(s) { return "'" + String(s == null ? '' : s).replace(/'/g, '') + "'"; }
+
+function shell(action, args, allowEmpty) {
+  if (!MODDIR) return Promise.reject(new Error('尚未定位到模块目录，请重开页面重试'));
+  var inner = 'sh ' + q(MODDIR + '/webui.sh') + ' ' + action;
+  if (args && args.length) inner += ' ' + args.join(' ');
+  return runText(inner, 90000).then(function (u) {
+    // webui.sh 的 err() 是写 stderr + exit 1，回包被 2>&1 合并进来。
+    // 以前只看"有没有内容"，于是「同名源已存在」「内置源不能删」这类
+    // 提示会被当成成功（toast 还显示"已添加"）。这里按退出码判失败。
+    if (u.rc !== 0) {
+      var lines = String(u.body).split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+      throw new Error(lines.length ? lines[lines.length - 1] : ('后端返回失败（rc=' + u.rc + '）'));
+    }
+    if (!allowEmpty && !u.body.trim()) {
+      throw new Error('后端没有返回任何内容（rc=' + u.rc + '）');
+    }
+    return u.body;
+  });
+}
+
+function parseKV(text) {
+  var o = {};
+  String(text).split(/\r?\n/).forEach(function (line) {
+    var i = line.indexOf('=');
+    if (i > 0) o[line.slice(0, i)] = line.slice(i + 1);
+  });
+  return o;
+}
+
+function b64ToText(b64) {
+  var clean = String(b64 || '').replace(/\s+/g, '');
+  if (!clean) return '';
+  var bin = atob(clean);
+  var bytes = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+function textToB64(text) {
+  var bytes = new TextEncoder().encode(text);
+  var out = '', chunk = 0x8000;
+  for (var i = 0; i < bytes.length; i += chunk) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(out);
+}
+
+/* ---------- 提示与弹窗 ---------- */
+var toastEl = document.getElementById('toast');
+var toastTimer;
+function toast(msg, isErr) {
+  toastEl.textContent = msg;
+  toastEl.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { toastEl.className = ''; }, isErr ? 3600 : 2000);
+}
+
+var dlg = { el: document.getElementById('mask'), resolve: null };
+function ask(title, text, okText) {
+  document.getElementById('dlgTitle').textContent = title;
+  document.getElementById('dlgText').textContent = text;
+  document.getElementById('dlgOk').textContent = okText || '确定';
+  dlg.el.classList.add('show');
+  return new Promise(function (res) { dlg.resolve = res; });
+}
+function closeDlg(v) {
+  dlg.el.classList.remove('show');
+  if (dlg.resolve) { dlg.resolve(v); dlg.resolve = null; }
+}
+document.getElementById('dlgOk').onclick = function () { closeDlg(true); };
+document.getElementById('dlgCancel').onclick = function () { closeDlg(false); };
+dlg.el.addEventListener('click', function (e) { if (e.target === dlg.el) closeDlg(false); });
+function info(title, text) {
+  document.getElementById('dlgTitle').textContent = title;
+  document.getElementById('dlgText').textContent = text;
+  document.getElementById('dlgOk').textContent = '关闭';
+  document.getElementById('dlgCancel').style.display = 'none';
+  dlg.el.classList.add('show');
+  return new Promise(function (res) {
+    dlg.resolve = function () { document.getElementById('dlgCancel').style.display = ''; res(true); };
+  });
+}
+
+function setBusy(btn, busy, text) {
+  if (!btn) return;
+  if (busy) {
+    btn.dataset.old = btn.textContent;
+    btn.textContent = text || '处理中…';
+    btn.disabled = true;
+  } else {
+    btn.textContent = btn.dataset.old || btn.textContent;
+    btn.disabled = false;
+  }
+}
+
+/* ---------- 状态 ---------- */
+var MODE_TEXT = { 'local': '本机', 'proxy': '代理', 'local,proxy': '本机 + 代理', 'server': '仅服务' };
+
+// module.prop 的 version 为了在管理器里一并显示内核版本，写成了 “4.2.0 (1.2026.08.05-0921)”。
+// 界面里内核版本本来就单列，这里把括号段剥掉，避免重复和换行。
+function modVer(v) {
+  var s = String(v == null ? '' : v).trim();
+  var t = s.replace(/\s*\([^)]*\)\s*$/, '');
+  return (t || s).replace(/^v/i, '') || '?';
+}
+
+function renderStatus(s) {
+  var on = s.running === '1';
+  var hero = document.getElementById('hero');
+  hero.className = 'hero' + (on ? ' on' : '');
+  document.getElementById('heroTitle').textContent = on ? '服务运行中' : '服务已停止';
+  document.getElementById('heroMeta').textContent = on
+    ? ('PID ' + (s.pid || '-') + ' · 配置已生效')
+    : '点下方“启动”拉起内核';
+
+  document.getElementById('sMode').textContent = MODE_TEXT[s.mode] || s.mode || '-';
+  document.getElementById('sPort').textContent = (s.main_port || '-') + (s.second_port && s.second_port !== s.main_port ? ' / ' + s.second_port : '');
+  document.getElementById('sIpt').textContent = s.ipt === '1' ? '已生效' : (s.mode === 'server' ? '不需要' : '未生效');
+  document.getElementById('sVer').textContent = s.core_ver || '-';
+
+  document.getElementById('headState').textContent = on ? '运行中' : '已停止';
+  document.getElementById('headDot').className = 'dot ' + (on ? 'on' : '');
+
+  var sub = '内核 ' + (s.core_ver || '?') + ' · 模块 ' + modVer(s.ver);
+  document.getElementById('headSub').textContent = sub;
+}
+
+function refreshStatus() {
+  if (!MODDIR) {
+    document.getElementById('heroTitle').textContent = '无法读取状态';
+    document.getElementById('heroMeta').textContent = '没有定位到模块目录';
+    return Promise.resolve();
+  }
+  // 有请求正在执行时跳过这一轮轮询，别和用户的操作抢通道
+  if (busy()) return Promise.resolve();
+  return shell('status').then(function (out) {
+    var kv = parseKV(out);
+    if (!kv.running && !kv.pid) {
+      throw new Error('后端返回无法解析：' + String(out).trim().slice(0, 120));
+    }
+    banner(false);
+    state.lastErr = '';
+    renderStatus(kv);
+  }).catch(function (e) {
+    document.getElementById('headState').textContent = '读取失败';
+    document.getElementById('headDot').className = 'dot err';
+    document.getElementById('heroTitle').textContent = '无法读取状态';
+    document.getElementById('heroMeta').textContent = e.message;
+    // 5 秒轮询同一错误时不要反复弹提示
+    if (state.tab === 'status' && state.lastErr !== e.message) {
+      state.lastErr = e.message;
+      toast(e.message, true);
+    }
+  });
+}
+
+function banner(show, msg) {
+  var b = document.getElementById('envBanner');
+  if (!show) { b.className = 'banner'; return; }
+  b.className = 'banner show';
+  b.innerHTML = '<b>无法连接模块</b><br>' + esc(msg);
+}
+
+/* ---------- 运行参数 ---------- */
+function fillParams() {
+  return shell('conf').then(function (out) {
+    var c = parseKV(out);
+    document.getElementById('pMain').value = c.Main_PORT || '';
+    document.getElementById('pSecond').value = c.Second_PORT || '';
+    document.getElementById('pMode').value = c.MODE || 'local';
+    document.getElementById('pTun').checked = c.TUN === 'yes';
+    document.getElementById('pWlan').checked = c.WLAN === 'yes';
+    document.getElementById('pData').checked = c.DATA === 'yes';
+    document.getElementById('pIp6').checked = c.IP6T_BLOCK === 'yes';
+    document.getElementById('pLog').checked = c.log === 'yes';
+    document.getElementById('pLang').value = c.language || 'zh-CN';
+    document.getElementById('pPkg').value = c.PKG || '';
+  });
+}
+
+function saveParams(btn) {
+  var main = document.getElementById('pMain').value.trim();
+  var second = document.getElementById('pSecond').value.trim();
+  if (!/^\d+$/.test(main)) return toast('主端口必须是数字', true);
+  if (second && !/^\d+$/.test(second)) return toast('次端口必须是数字或留空', true);
+
+  var args = [
+    q('Main_PORT=' + main),
+    q('Second_PORT=' + second),
+    q('MODE=' + document.getElementById('pMode').value),
+    q('TUN=' + (document.getElementById('pTun').checked ? 'yes' : 'no')),
+    q('WLAN=' + (document.getElementById('pWlan').checked ? 'yes' : 'no')),
+    q('DATA=' + (document.getElementById('pData').checked ? 'yes' : 'no')),
+    q('IP6T_BLOCK=' + (document.getElementById('pIp6').checked ? 'yes' : 'no')),
+    q('log=' + (document.getElementById('pLog').checked ? 'yes' : 'no')),
+    q('language=' + document.getElementById('pLang').value),
+    q('PKG=' + document.getElementById('pPkg').value.trim())
+  ];
+  setBusy(btn, true);
+  shell('set', args).then(function () {
+    toast('参数已保存');
+    return ask('需要重启', '运行参数已写入 script_conf.sh，是否立即重启服务使其生效？', '立即重启');
+  }).then(function (yes) {
+    if (yes) return doCtl('restart');
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () {
+    setBusy(btn, false);
+  });
+}
+
+/* ---------- DNS 配置 ---------- */
+var confDirty = false;
+
+function loadConf() {
+  return shell('cat', [q('smartdns.conf')]).then(function (out) {
+    document.getElementById('confEditor').value = asText(out);
+    confDirty = false;
+    var lines = document.getElementById('confEditor').value.split('\n').length;
+    document.getElementById('confHint').textContent = '/data/adb/smartdns/config/smartdns.conf · ' + lines + ' 行';
+  });
+}
+
+function saveConf(btn) {
+  var text = document.getElementById('confEditor').value;
+  if (!text.trim()) return toast('配置为空，已取消保存', true);
+  var b64 = textToB64(text);
+  if (b64.length > 400000) return toast('配置过大（约超过 300KB），请精简后再保存', true);
+  setBusy(btn, true, '保存中…');
+  shell('put', [q('smartdns.conf'), q(b64)]).then(function () {
+    confDirty = false;
+    toast('已保存，重启后生效');
+    return ask('需要重启', '配置已写入，是否立即重启服务？', '立即重启');
+  }).then(function (yes) {
+    if (yes) return doCtl('restart');
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () { setBusy(btn, false); });
+}
+
+// 真正发起测试：编辑器有未保存内容时，测的就是编辑器里的这一份
+function runCheck() {
+  var text = document.getElementById('confEditor').value;
+  var useEditor = confDirty && text.trim();
+  var args = [];
+  var note = '';
+  if (useEditor) {
+    var b64 = textToB64(text);
+    if (b64.length > 200000) {
+      toast('配置内容过大，无法在线测试（可先保存再测试）', true);
+      return Promise.resolve(null);
+    }
+    args = [q(b64)];
+    note = '\n\n（测试对象：编辑器中尚未保存的内容）';
+  }
+  return shell('check', args).then(function (out) {
+    var kv = parseKV(out);
+    return { rc: kv.rc, log: asText(kv.b64 || ''), note: note, raw: String(out) };
+  });
+}
+
+// 结果单独弹窗：先把服务恢复再展示，免得用户读结果的这段时间 DNS 一直是断的
+function showCheckResult(r) {
+  if (r.rc === undefined) {
+    return info('配置测试失败', '后端没有返回测试结果，无法判断这份配置是否可用：\n\n' +
+      (String(r.raw).trim().slice(0, 600) || '（空输出）'));
+  }
+  if (r.rc === '124') {
+    return info('配置测试通过', '内核已按这份配置成功启动并持续运行，没有报错。' + r.note +
+      (r.log ? '\n\n—— 内核输出 ——\n' + r.log.slice(-3000) : ''));
+  }
+  return info('配置测试未通过', '内核进程退出码 ' + r.rc + '，在这份配置下没能正常启动。' + r.note +
+    '\n\n—— 内核输出 ——\n' + (r.log.slice(-4000) || '（无输出，通常是配置语法错误或端口冲突）'));
+}
+
+/* 配置测试要占用同样的端口，服务在跑就必然失败。
+ * 旧版直接把后端的「服务正在运行，请先停止」当成测试结果弹出来，用户只看到
+ * “进程退出码 undefined、（无输出）”，完全不知道该怎么办。这里改成先问一句、
+ * 自动停服 → 测试 → 自动恢复。 */
+function testConf(btn) {
+  var wasRunning = false, stopped = false;
+  setBusy(btn, true, '测试中…');
+  return shell('status').then(function (out) {
+    wasRunning = parseKV(out).running === '1';
+    if (!wasRunning) return true;
+    return ask('需要先停止服务',
+      '配置测试会用同样的端口把内核试跑一次，所以必须先把当前服务停掉' +
+      '（测试期间 DNS 会短暂不可用）。\n\n测试结束后会自动重新启动。继续？',
+      '停止并测试');
+  }).then(function (go) {
+    if (!go) { toast('已取消测试'); return null; }
+    if (!wasRunning) return true;
+    return doCtl('stop').then(function () { stopped = true; return delay(800); });
+  }).then(function (r) {
+    if (r === null) return null;
+    return runCheck().then(function (res) {
+      // 先恢复服务，再弹结果
+      return (stopped ? doCtl('start') : Promise.resolve()).then(function () {
+        return showCheckResult(res);
+      });
+    });
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () {
+    setBusy(btn, false);
+  });
+}
+
+/* ---------- 日志 ---------- */
+function loadLog() {
+  if (!MODDIR) return Promise.resolve();
+  var box = document.getElementById('logBox');
+  return shell('tail', [q(state.logName), String(state.logLines)], true).then(function (out) {
+    box.textContent = asText(out) || '（日志为空）';
+  }).catch(function (e) {
+    box.textContent = '读取失败：' + e.message;
+  });
+}
+
+/* ---------- 关于 ---------- */
+function loadInfo() {
+  return shell('info').then(function (out) {
+    var i = parseKV(out);
+    if (i.manager) bridgeDiag.manager = i.manager;
+    var rows = [
+      ['模块版本', modVer(i.ver)], ['版本代号', i.ver_code], ['内核版本', i.core_ver],
+      ['模块管理器', i.manager], ['作者', i.author], ['架构', i.arch], ['Android', i.android],
+      ['内核', i.kernel], ['模块目录', i.module_path], ['配置目录', i.data_path],
+      ['配置备份', i.backup_time || '暂无']
+    ];
+    document.getElementById('aboutList').innerHTML = rows.map(function (r) {
+      return '<div class="kv"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1] || '-') + '</span></div>';
+    }).join('');
+    var repo = (i.update_json || '').replace(/\/raw\/[^/]+\/updateinfo\.json$/, '');
+    if (repo) {
+      var a = document.getElementById('repoLink');
+      a.href = repo;
+      a.textContent = repo.replace(/^https:\/\/github\.com\//, '');
+    }
+  });
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+
+/* ---------- 服务控制 ---------- */
+function doCtl(action) {
+  var label = { start: '启动', stop: '停止', restart: '重启', clean: '清理' }[action] || action;
+  var idMap = { start: 'btnStart', stop: 'btnStop', restart: 'btnRestart', clean: 'btnClean' };
+  var el = idMap[action] ? document.getElementById(idMap[action]) : null;
+  // 同步返回型 exec 会阻塞 JS 线程，先让界面把"处理中"画出来再执行
+  return new Promise(function (r) { setTimeout(r, 60); }).then(function () {
+    if (el) setBusy(el, true, label + '中…');
+    return shell('ctl', [q(action)]);
+  }).then(function (out) {
+    var kv = parseKV(out);
+    var msg = asText(kv.b64 || '');
+    if (kv.rc === undefined) {
+      // 后端没有输出 rc= 行：脚本本身没跑起来，把原始回包摊开，不要笼统报"未知错误"
+      toast(label + '失败：后端无返回（' + (String(out).trim().slice(0, 80) || '空输出') + '）', true);
+    } else if (kv.rc !== '0') {
+      var last = msg.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).pop();
+      toast(label + '失败：' + (last || '内核没有给出原因，请查看「日志 → 服务日志」'), true);
+    } else {
+      toast(label + '完成');
+    }
+    return refreshStatus();
+  }).catch(function (e) {
+    toast(label + '失败：' + e.message, true);
+  }).then(function () {
+    if (el) setBusy(el, false);
+  });
+}
+
+/* ---------- 规则源 ---------- */
+var RULE_TYPES = {
+  'domain-block': '域名屏蔽',
+  'domain-cn': '国内域名',
+  'domain-foreign': '国外域名',
+  'ip-whitelist': 'IP 白名单',
+  'ip-blacklist': 'IP 黑名单',
+  'hosts': 'hosts 映射'
+};
+var RULE_TYPE_HINT = {
+  'domain-block': '一行一个域名，命中直接返回空地址。广告 / 追踪列表选这个。',
+  'domain-cn': '一行一个域名，强制走国内解析组。',
+  'domain-foreign': '一行一个域名，走国外组并打 gfwlist 标记，给代理分流用。',
+  'ip-whitelist': '一行一个 IP 或 CIDR 网段，加入国内直连白名单。',
+  'ip-blacklist': '一行一个 IP 或 CIDR 网段，加入黑名单。',
+  'hosts': '标准 hosts：IP 域名（一行可多个）。0.0.0.0 视为屏蔽。'
+};
+var RULE_SCHED_TIP = {
+  manual: '不会自动更新，只在点「更新」时拉取。',
+  hours: '距上次成功更新超过设定时长就拉取一次，由看门狗检查（可能晚 1–2 分钟）。',
+  daily: '每天到这个时间更新一次，当天只跑一次。',
+  weekly: '每周指定的那天更新一次，当天只跑一次。',
+  monthly: '每月指定日期更新一次；遇到该月没有这一天（如 31 日）就跳过这个月。'
+};
+
+// 星期名，下标与 date +%u 对齐（1=周一 … 7=周日）
+var WD_NAME = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+// at 的三种形态：HH:MM（每天）/ w1-06:00（每周一）/ m15-06:00（每月 15 日）
+function atInfo(at) {
+  if (!at) return null;
+  var m = /^([wm])(\d{1,2})-(\d{1,2}:\d{2})$/.exec(at);
+  if (m) {
+    var n = Number(m[2]);
+    if (m[1] === 'w' && n >= 1 && n <= 7) return { kind: 'weekly', n: n, hm: m[3] };
+    if (m[1] === 'm' && n >= 1 && n <= 31) return { kind: 'monthly', n: n, hm: m[3] };
+    return null;
+  }
+  if (/^\d{1,2}:\d{2}$/.test(at)) return { kind: 'daily', n: 0, hm: at };
+  return null;
+}
+
+var ruleUI = { userFile: 'block', timer: null, rows: [], mode: 'add', id: '', sched: 'hours' };
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function fmtAgo(ts) {
+  var t = Number(ts || 0);
+  if (!t) return '从未更新';
+  var d = Math.floor(Date.now() / 1000) - t;
+  if (d < 0) d = 0;
+  if (d < 60) return '刚刚更新';
+  if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
+  if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
+  return Math.floor(d / 86400) + ' 天前';
+}
+
+// 后端每行一个源，字段用 | 分隔：
+// id|type|url|interval|enabled|at|status|lines|last|msg|bin
+function rulesParse(text) {
+  return String(text).split('\n').filter(function (l) { return l.trim(); }).map(function (l) {
+    var p = l.split('|');
+    return {
+      id: p[0], type: p[1], url: p[2], interval: p[3], enabled: p[4],
+      at: p[5], status: p[6], lines: p[7], last: p[8], msg: p[9], bin: p[10]
+    };
+  });
+}
+
+function findRule(id) {
+  for (var i = 0; i < ruleUI.rows.length; i++) {
+    if (ruleUI.rows[i].id === id) return ruleUI.rows[i];
+  }
+  return null;
+}
+
+function schedText(r) {
+  var a = atInfo(r.at);
+  if (a) {
+    if (a.kind === 'daily') return '每天 ' + a.hm;
+    if (a.kind === 'weekly') return '每' + WD_NAME[a.n] + ' ' + a.hm;
+    return '每月 ' + a.n + ' 日 ' + a.hm;
+  }
+  var n = Number(r.interval || 0);
+  if (n > 0) return (n % 24 === 0) ? ('每 ' + (n / 24) + ' 天') : ('每 ' + n + ' 小时');
+  return '仅手动';
+}
+
+// 下一次定点触发的时间点。monthly 要跳过"该月没有这一天"的情况（如 2 月 31 日），
+// 所以最多往后找 4 个月，一定能碰到存在这个日期的月份。
+function nextAtDate(a, nowMs) {
+  var base = new Date(nowMs);
+  var hp = a.hm.split(':');
+  var h = Number(hp[0]), mi = Number(hp[1]);
+  var y = base.getFullYear(), mo = base.getMonth(), d = base.getDate();
+  if (a.kind === 'daily') {
+    var t = new Date(y, mo, d, h, mi, 0, 0);
+    if (t.getTime() <= nowMs) t = new Date(y, mo, d + 1, h, mi, 0, 0);
+    return t;
+  }
+  if (a.kind === 'weekly') {
+    // JS 的 getDay() 周日是 0，这里换算成 1..7
+    var cur = base.getDay() === 0 ? 7 : base.getDay();
+    var add = (a.n - cur + 7) % 7;
+    var w = new Date(y, mo, d + add, h, mi, 0, 0);
+    if (w.getTime() <= nowMs) w = new Date(y, mo, d + add + 7, h, mi, 0, 0);
+    return w;
+  }
+  for (var k = 0; k < 4; k++) {
+    var yy = y, mm = mo + k;
+    if (mm > 11) { yy += 1; mm -= 12; }
+    var cand = new Date(yy, mm, a.n, h, mi, 0, 0);
+    if (cand.getMonth() !== mm) continue;   // 该月没有这一天，跳过
+    if (cand.getTime() <= nowMs) continue;
+    return cand;
+  }
+  return null;
+}
+
+function fmtNext(ts, nowMs) {
+  var gap = ts - nowMs;
+  if (gap <= 0) return '已到更新时间';
+  var d = new Date(ts);
+  var hhmm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  if (gap < 3600 * 1000) return '预计 ' + Math.max(1, Math.round(gap / 60000)) + ' 分钟后';
+  if (gap < 24 * 3600 * 1000) {
+    var t0 = new Date(nowMs);
+    var same = d.getDate() === t0.getDate() && d.getMonth() === t0.getMonth();
+    return '预计 ' + (same ? '今天 ' : '明天 ') + hhmm;
+  }
+  // 超过一天就报日期：每周/每月的间隔按"几天后"取整会失真
+  // （还剩 2 天 10 小时说成"2 天后"，用户会以为是明天）
+  if (gap < 365 * 86400000) return '预计 ' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hhmm;
+  return '预计 ' + Math.ceil(gap / 86400000) + ' 天后';
+}
+
+// 只做"预计"，真正是否到期由后端的 rules_due 判断（这里不参与决策）
+function nextRunText(r) {
+  if (r.enabled !== '1') return '';        // 状态那一栏已经写了"已停用"，不再重复
+  var now = Date.now();
+  var a = atInfo(r.at);
+  if (a) {
+    var t = nextAtDate(a, now);
+    return t ? fmtNext(t.getTime(), now) : '';
+  }
+  var intv = Number(r.interval || 0);
+  if (intv > 0) {
+    var last = Number(r.last || 0);
+    if (!last) return '等待首次更新';
+    var gap = last + intv * 3600 - Math.floor(now / 1000);
+    if (gap <= 0) return '已到更新时间';
+    if (gap < 3600) return '预计 ' + Math.max(1, Math.round(gap / 60)) + ' 分钟后';
+    if (gap < 48 * 3600) return '预计 ' + Math.round(gap / 3600) + ' 小时后';
+    return '预计 ' + Math.round(gap / 86400) + ' 天后';
+  }
+  return '不自动更新';
+}
+
+function ruleStatusHtml(r) {
+  if (r.enabled !== '1') return '<span class="st"><i></i>已停用</span>';
+  if (r.status === 'fail') return '<span class="st fail"><i></i>' + escHtml(r.msg || '更新失败') + '</span>';
+  if (r.status === 'pending') return '<span class="st pending"><i></i>' + escHtml(r.msg || '待更新') + '</span>';
+  if (r.status === 'ok') return '<span class="st ok"><i></i>' + (r.lines || '0') + ' 条</span>';
+  return '<span class="st"><i></i>尚未更新</span>';
+}
+
+function renderRules(rows) {
+  ruleUI.rows = rows;
+  var host = document.getElementById('rulesList');
+  if (!rows.length) {
+    host.innerHTML = '<div style="color:var(--dim);padding:14px 0;font-size:13px">' +
+      '还没有规则源，点上面的「＋ 添加规则源」建一个。</div>';
+    return;
+  }
+  host.innerHTML = rows.map(function (r) {
+    var on = r.enabled === '1';
+    var builtin = r.bin === '1';
+    return '<div class="rsrc' + (on ? '' : ' off') + '">' +
+      '<div class="rhead">' +
+        '<div style="flex:1 1 auto;min-width:0">' +
+          '<div class="rname">' + escHtml(r.id) +
+            ' <span class="tag">' + escHtml(RULE_TYPES[r.type] || r.type) + '</span>' +
+            (builtin ? ' <span class="tag gray">内置</span>' : '') +
+          '</div>' +
+          '<div class="rurl">' + escHtml(r.url) + '</div>' +
+        '</div>' +
+        '<label class="switch"><input type="checkbox" data-rtog="' + escHtml(r.id) + '"' +
+          (on ? ' checked' : '') + '><i></i></label>' +
+      '</div>' +
+      '<div class="rmeta">' + ruleStatusHtml(r) +
+        '<span>' + escHtml(schedText(r)) + '</span>' +
+        '<span>' + escHtml(fmtAgo(r.last)) + '</span>' +
+        (nextRunText(r) ? '<span>' + escHtml(nextRunText(r)) + '</span>' : '') +
+      '</div>' +
+      '<div class="rfoot">' +
+        '<button class="btn sm" data-rupd="' + escHtml(r.id) + '">更新</button>' +
+        '<button class="btn sm" data-redit="' + escHtml(r.id) + '">设置</button>' +
+        (builtin ? '' : '<button class="btn sm danger" data-rdel="' + escHtml(r.id) + '">删除</button>') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// 合并结果是"全局一份"，和把各个源的条数相加不是一回事：
+// 同域名在多个源里出现时只保留一条，这里显示的是内核真正加载的行数。
+function renderMerged(kv) {
+  var kept = Number(kv.merged_kept || 0);
+  var total = Number(kv.merged_total || 0);
+  var removed = Number(kv.merged_removed || 0);
+  var conflict = Number(kv.merged_conflict || 0);
+  var srcs = Number(kv.merged_sources || 0);
+  var ts = Number(kv.merged_time || 0);
+  var fmt = function (n) { return Number(n).toLocaleString('en-US'); };
+
+  document.getElementById('msKept').textContent = kept ? fmt(kept) : (total ? '0' : '–');
+  document.getElementById('msRaw').textContent = total ? fmt(total) : '–';
+  document.getElementById('msDrop').textContent = total ? fmt(removed) : '–';
+
+  var el = document.getElementById('msMeta');
+  if (!kept) {
+    el.textContent = '还没有合并结果，更新任意规则源后会自动生成。';
+    return;
+  }
+  var parts = [srcs + ' 个源'];
+  if (removed > 0) parts.push('去掉 ' + removed + ' 条（其中 ' + conflict + ' 条同域名不同规则）');
+  else parts.push('没有重复');
+  if (ts) parts.push('更新于 ' + fmtAgo(ts));
+  el.textContent = '内核加载的就是这一份：' + parts.join(' · ');
+}
+
+function loadRules() {
+  return shell('rules', ['list']).then(function (out) {
+    var kv = parseKV(out);
+    renderRules(rulesParse(asText(kv.b64_list || '')));
+    renderMerged(kv);
+    var running = kv.running === '1';
+    document.getElementById('rulesHint').textContent = running ? '正在更新…' : '';
+    if (running && state.tab === 'rules') {
+      clearTimeout(ruleUI.timer);
+      ruleUI.timer = setTimeout(function () { loadRules().catch(function () {}); }, 1600);
+    }
+    return kv;
+  });
+}
+
+// 更新放后台跑（下载 + 转换几十万行，远超桥接的同步上限），
+// 这里只负责发起，然后靠 running 标记轮询进度。
+function rulesUpdate(id, btn) {
+  if (btn) setBusy(btn, true, '…');
+  return shell('rules', ['update', id]).then(function () {
+    document.getElementById('rulesHint').textContent = '正在更新…';
+    toast(id === 'all' ? '已开始更新全部源' : '已开始更新 ' + id);
+    clearTimeout(ruleUI.timer);
+    ruleUI.timer = setTimeout(function () { loadRules().catch(function () {}); }, 1200);
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () {
+    if (btn) setBusy(btn, false);
+  });
+}
+
+// 行内开关：只改 enabled，其它字段原样保留
+function toggleRule(id, on, el) {
+  var r = findRule(id);
+  if (!r) return;
+  var at = r.at || '-';
+  shell('rules', ['set', q(id), q(String(Number(r.interval) || 0)), q(on ? '1' : '0'), q(at)])
+    .then(function () {
+      toast((on ? '已启用 ' : '已停用 ') + id);
+      return loadRules();
+    })
+    .catch(function (e) {
+      toast(e.message, true);
+      if (el) el.checked = !on;
+    });
+}
+
+function delRule(id) {
+  var r = findRule(id);
+  var extra = (r && r.url && /^https?:/.test(r.url))
+    ? '规则文件 auto-' + id + '.conf 会一起删掉，缓存里的原始列表也会清除。'
+    : '已生成的规则文件 auto-' + id + '.conf 会一起删掉。';
+  ask('删除规则源', '即将删除「' + id + '」。\n\n' + extra +
+    '\n\n删除后会自动重载内核，DNS 会有短暂中断。', '删除')
+    .then(function (yes) {
+      if (!yes) return;
+      return shell('rules', ['del', q(id)]).then(function () {
+        toast('已删除 ' + id);
+        return loadRules();
+      });
+    })
+    .catch(function (e) { toast(e.message, true); });
+}
+
+/* ---------- 添加 / 设置弹窗 ---------- */
+
+function setSchedMode(mode) {
+  ruleUI.sched = mode;
+  Array.prototype.forEach.call(document.querySelectorAll('#rfSched button'), function (b) {
+    b.classList.toggle('on', b.dataset.mode === mode);
+  });
+  var timed = (mode === 'daily' || mode === 'weekly' || mode === 'monthly');
+  document.getElementById('rfHoursWrap').style.display = mode === 'hours' ? 'flex' : 'none';
+  document.getElementById('rfWhenWrap').style.display = timed ? 'flex' : 'none';
+  // 每周/每月多一个选择器，前缀和后缀跟着换：每周 [周一] 06:00 / 每月 [15] 日 06:00
+  document.getElementById('rfWhenPre').textContent =
+    mode === 'monthly' ? '每月' : (mode === 'weekly' ? '每' : '每天');
+  document.getElementById('rfWeekday').style.display = mode === 'weekly' ? '' : 'none';
+  document.getElementById('rfDom').style.display = mode === 'monthly' ? '' : 'none';
+  document.getElementById('rfWhenSuffix').style.display = mode === 'monthly' ? '' : 'none';
+  document.getElementById('rfSchedTip').textContent = RULE_SCHED_TIP[mode] || '';
+}
+
+function ruleErr(msg) {
+  var el = document.getElementById('rfErr');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+var lastTime = '06:00';
+
+function openRuleDlg(mode, id) {
+  var r = mode === 'edit' ? findRule(id) : null;
+  if (mode === 'edit' && !r) return;
+  ruleUI.mode = mode;
+  ruleUI.id = r ? r.id : '';
+
+  var sel = document.getElementById('rfType');
+  if (!sel.options.length) {
+    Object.keys(RULE_TYPES).forEach(function (k) {
+      var o = document.createElement('option');
+      o.value = k;
+      o.textContent = RULE_TYPES[k] + ' · ' + k;
+      sel.appendChild(o);
+    });
+  }
+
+  document.getElementById('ruleTitle').textContent = mode === 'edit' ? '设置规则源' : '添加规则源';
+  document.getElementById('ruleSub').textContent = mode === 'edit'
+    ? '修改类型、地址或更新时间，保存后立即生效。'
+    : '订阅一个在线规则表，或指向设备上的本地文件。';
+
+  var idEl = document.getElementById('rfId');
+  idEl.value = r ? r.id : '';
+  idEl.disabled = !!r;
+  document.getElementById('rfIdTip').textContent = r
+    ? '名称创建后不可更改（它就是生成的文件名）。'
+    : '只能用字母、数字、连字符和下划线，同时作为生成的文件名。';
+
+  var wdSel = document.getElementById('rfWeekday');
+  if (!wdSel.options.length) {
+    for (var wi = 1; wi <= 7; wi++) {
+      var wo = document.createElement('option');
+      wo.value = String(wi);
+      wo.textContent = WD_NAME[wi];
+      wdSel.appendChild(wo);
+    }
+    var domSel = document.getElementById('rfDom');
+    for (var di = 1; di <= 31; di++) {
+      var doo = document.createElement('option');
+      doo.value = String(di);
+      doo.textContent = String(di);
+      domSel.appendChild(doo);
+    }
+  }
+
+  sel.value = r ? r.type : 'domain-block';
+  document.getElementById('rfTypeTip').textContent = RULE_TYPE_HINT[sel.value] || '';
+  document.getElementById('rfUrl').value = r ? r.url : '';
+  document.getElementById('rfHours').value = (r && Number(r.interval) > 0) ? r.interval : 6;
+  document.getElementById('rfEnabled').checked = r ? r.enabled === '1' : true;
+
+  var a = r ? atInfo(r.at) : null;
+  document.getElementById('rfTime').value = a ? a.hm : lastTime;
+  document.getElementById('rfWeekday').value = (a && a.kind === 'weekly') ? String(a.n) : '1';
+  document.getElementById('rfDom').value = (a && a.kind === 'monthly') ? String(a.n) : '1';
+
+  var m = 'hours';
+  if (r) {
+    if (a) m = a.kind;                       // daily / weekly / monthly
+    else m = Number(r.interval) > 0 ? 'hours' : 'manual';
+  }
+  setSchedMode(m);
+
+  var err = document.getElementById('rfErr');
+  err.textContent = '';
+  err.classList.remove('show');
+  document.getElementById('ruleMask').classList.add('show');
+}
+
+function closeRuleDlg() {
+  document.getElementById('ruleMask').classList.remove('show');
+}
+
+function submitRule(btn) {
+  var editing = ruleUI.mode === 'edit';
+  var id = editing ? ruleUI.id : document.getElementById('rfId').value.trim();
+  var type = document.getElementById('rfType').value;
+  var url = document.getElementById('rfUrl').value.trim();
+  var enabled = document.getElementById('rfEnabled').checked ? '1' : '0';
+  var intv = 0, at = '';
+
+  var hm = (document.getElementById('rfTime').value || '').trim();
+  if (ruleUI.sched === 'hours') {
+    intv = parseInt(document.getElementById('rfHours').value, 10);
+    if (!(intv >= 1 && intv <= 720)) return ruleErr('间隔请填 1–720 之间的小时数');
+  } else if (ruleUI.sched !== 'manual') {
+    if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(hm)) return ruleErr('时间请填 HH:MM，例如 06:30');
+    if (ruleUI.sched === 'daily') at = hm;
+    else if (ruleUI.sched === 'weekly') at = 'w' + document.getElementById('rfWeekday').value + '-' + hm;
+    else if (ruleUI.sched === 'monthly') at = 'm' + document.getElementById('rfDom').value + '-' + hm;
+  }
+
+  if (!editing) {
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return ruleErr('名称只能用字母、数字、连字符和下划线');
+    if (!url) return ruleErr('请填写地址');
+  }
+  if (url && /\s/.test(url)) return ruleErr('地址里不能有空格');
+  if (editing && !url) return ruleErr('地址不能为空');
+
+  setBusy(btn, true, '保存中…');
+  var job;
+  if (!editing) {
+    job = shell('rules', ['add', q(id), q(type), q(url), q(String(intv)), q(enabled), q(at)])
+      .then(function () {
+        lastTime = hm || lastTime;
+        closeRuleDlg();
+        toast('已添加 ' + id + '，正在拉取');
+        return loadRules();
+      })
+      .then(function () { return rulesUpdate(id, null); });
+  } else {
+    var r = findRule(ruleUI.id) || {};
+    // 传空串表示"这一项不动"，避免把未修改的字段重写一遍
+    var newUrl = url !== r.url ? url : '';
+    var newType = type !== r.type ? type : '';
+    var atArg = at || '-';   // - 表示清掉定点时间
+    job = shell('rules', ['set', q(ruleUI.id), q(String(intv)), q(enabled), q(atArg),
+        q(newUrl), q(newType)])
+      .then(function () {
+        lastTime = hm || lastTime;
+        closeRuleDlg();
+        toast('已保存 ' + ruleUI.id);
+        return loadRules();
+      });
+  }
+  job.catch(function (e) { ruleErr(e.message); })
+    .then(function () { setBusy(btn, false); });
+}
+
+function loadHosts() {
+  return shell('rules', ['file', q('hosts')], true).then(function (out) {
+    document.getElementById('rulesHosts').value = asText(parseKV(out).b64 || '');
+  });
+}
+
+function saveHosts(btn) {
+  var b64 = textToB64(document.getElementById('rulesHosts').value);
+  if (b64.length > 300000) return toast('内容过大，请精简后再保存', true);
+  setBusy(btn, true, '保存中…');
+  // 后端 putfile 写完会立刻转换并后台重载，这里不必再调一次 update
+  // （以前那样做会重复转换 + 重复重启，反而容易撞上桥接超时）
+  shell('rules', ['putfile', q('hosts'), q(b64)]).then(function () {
+    toast('hosts 已保存并生效');
+    return loadHosts();
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () { setBusy(btn, false); });
+}
+
+function loadUserFile() {
+  return shell('rules', ['file', q(ruleUI.userFile)], true).then(function (out) {
+    document.getElementById('rulesUser').value = asText(parseKV(out).b64 || '');
+  });
+}
+
+function saveUserFile(btn) {
+  var b64 = textToB64(document.getElementById('rulesUser').value);
+  if (b64.length > 300000) return toast('内容过大，请精简后再保存', true);
+  setBusy(btn, true, '保存中…');
+  // 同 saveHosts：putfile 内部已经重建索引并后台重载，不再多调一次 reload
+  shell('rules', ['putfile', q(ruleUI.userFile), q(b64)]).then(function () {
+    toast('已保存并生效');
+    return loadUserFile();
+  }).then(function () {
+    return loadRules();
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () { setBusy(btn, false); });
+}
+
+/* ---------- 标签切换 ---------- */
+function switchTab(name) {
+  state.tab = name;
+  Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.view'), function (v) {
+    v.classList.toggle('active', v.id === 'view-' + name);
+  });
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (name === 'status') refreshStatus();
+  if (name === 'params') fillParams().catch(function (e) { toast(e.message, true); });
+  if (name === 'config' && !confDirty) loadConf().catch(function (e) { toast(e.message, true); });
+  if (name === 'rules') {
+    loadRules().catch(function (e) { toast(e.message, true); });
+    loadHosts().catch(function () {});
+    loadUserFile().catch(function () {});
+  }
+  if (name === 'logs') loadLog();
+  if (name === 'about') loadInfo().catch(function (e) { toast(e.message, true); });
+}
+
+/* ---------- 初始化 ---------- */
+function findModDir() {
+  // 优先精确定位，再退回通配；要求 webui.sh 与 constant.sh 同时存在才算可用
+  var probe =
+    'for d in /data/adb/modules/smartdns /data/adb/modules_update/smartdns ' +
+    '/data/adb/modules/* /data/adb/modules_update/*; do ' +
+    '[ -f "$d/webui.sh" ] && [ -f "$d/constant.sh" ] && echo "$d" && break; done';
+  return runText(probe, 15000).then(function (u) {
+    return u.body.trim().split('\n').filter(Boolean)[0] || '';
+  });
+}
+
+function failEnv(msg) {
+  banner(true, msg);
+  document.getElementById('headState').textContent = '未连接';
+  document.getElementById('headDot').className = 'dot err';
+  document.getElementById('heroTitle').textContent = '未连接';
+  document.getElementById('heroMeta').textContent = '见顶部提示';
+}
+
+function startTimers() {
+  state.timer = setInterval(function () {
+    if (state.tab === 'status' && MODDIR && document.visibilityState === 'visible') refreshStatus();
+  }, 5000);
+  state.logTimer = setInterval(function () {
+    if (document.getElementById('autoLog').checked && state.tab === 'logs' && MODDIR &&
+        !busy() && document.visibilityState === 'visible') loadLog();
+  }, 5000);
+}
+
+function boot() {
+  startTimers();
+  var tries = 0;
+  (function attempt() {
+    // WebView 的桥对象可能比页面脚本晚注入，最多等 2 秒
+    if (!detectBridge()) {
+      if (++tries < 20) return setTimeout(attempt, 100);
+      return failEnv('当前页面不在模块管理器的 WebUI 环境中打开，无法执行 root 命令。请从管理器的「打开 WebUI」进入。');
+    }
+    ready().then(findModDir).then(function (dir) {
+      if (!dir) {
+        return failEnv('没有找到已安装的 SmartDNS 模块（缺少 webui.sh），请先刷入模块后再打开 WebUI。');
+      }
+      MODDIR = dir;
+      banner(false);
+      return refreshStatus().then(loadInfo).catch(function () {});
+    }).catch(function (e) {
+      failEnv(e.message);
+    });
+  })();
+}
+
+/* ---------- 事件绑定 ---------- */
+Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) {
+  b.addEventListener('click', function () { switchTab(b.dataset.tab); });
+});
+
+document.getElementById('btnStart').onclick = function () { doCtl('start'); };
+document.getElementById('btnStop').onclick = function () { doCtl('stop'); };
+document.getElementById('btnRestart').onclick = function () { doCtl('restart'); };
+document.getElementById('btnClean').onclick = function () {
+  ask('清理防火墙规则', '将把 iptables 恢复到首次启动前记录的状态，并停止服务。\n\n如果其他程序改过防火墙规则，可能受影响。继续？', '清理')
+    .then(function (yes) { if (yes) doCtl('clean'); });
+};
+
+document.getElementById('btnSaveParams').onclick = function () { saveParams(this); };
+document.getElementById('btnReloadParams').onclick = function () {
+  fillParams().then(function () { toast('已重新载入'); }).catch(function (e) { toast(e.message, true); });
+};
+
+var editor = document.getElementById('confEditor');
+editor.addEventListener('input', function () {
+  confDirty = true;
+  document.getElementById('confHint').textContent = '有未保存的修改';
+});
+document.getElementById('btnSaveConf').onclick = function () { saveConf(this); };
+document.getElementById('btnReloadConf').onclick = function () {
+  if (confDirty) {
+    ask('放弃修改？', '编辑器里有未保存的内容，重新载入会丢弃这些修改。', '重新载入')
+      .then(function (yes) { if (yes) loadConf(); });
+  } else loadConf();
+};
+document.getElementById('btnTestConf').onclick = function () { testConf(this); };
+document.getElementById('btnRestoreConf').onclick = function () {
+  ask('还原备份', '将用上一次保存前自动生成的备份覆盖当前配置。', '还原')
+    .then(function (yes) {
+      if (!yes) return;
+      return shell('restore').then(function () {
+        toast('已还原');
+        return ask('需要重启', '配置已还原，是否立即重启服务？', '立即重启');
+      }).then(function (r) { if (r) return doCtl('restart'); }).then(loadConf)
+        .catch(function (e) { toast(e.message, true); });
+    });
+};
+document.getElementById('btnFactoryConf').onclick = function () {
+  ask('恢复出厂配置', '将用模块内置的示例配置覆盖当前 smartdns.conf（当前配置会先备份）。\n\n这会丢掉你所有自定义上游和规则，确定继续？', '恢复出厂')
+    .then(function (yes) {
+      if (!yes) return;
+      return shell('factory').then(function () {
+        toast('已恢复出厂配置');
+        return loadConf();
+      }).catch(function (e) { toast(e.message, true); });
+    });
+};
+
+Array.prototype.forEach.call(document.querySelectorAll('#logSeg button'), function (b) {
+  b.addEventListener('click', function () {
+    Array.prototype.forEach.call(document.querySelectorAll('#logSeg button'), function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    state.logName = b.dataset.log;
+    loadLog();
+  });
+});
+Array.prototype.forEach.call(document.querySelectorAll('#lineSeg button'), function (b) {
+  b.addEventListener('click', function () {
+    Array.prototype.forEach.call(document.querySelectorAll('#lineSeg button'), function (x) { x.classList.remove('on'); });
+    b.classList.add('on');
+    state.logLines = Number(b.dataset.lines);
+    loadLog();
+  });
+});
+document.getElementById('btnRefreshLog').onclick = function () { loadLog(); };
+
+/* ---------- 规则页绑定 ---------- */
+document.getElementById('btnRuleAdd').onclick = function () { openRuleDlg('add'); };
+
+document.getElementById('btnRulesAll').onclick = function () {
+  var b = this;
+  setBusy(b, true, '…');
+  rulesUpdate('all', null).then(function () { setBusy(b, false); });
+};
+
+// 列表用事件委托：每次渲染后不必重新绑一遍
+document.getElementById('rulesList').addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('button') : null;
+  if (!b || !b.dataset) return;
+  if (b.dataset.rupd) rulesUpdate(b.dataset.rupd, b);
+  else if (b.dataset.redit) openRuleDlg('edit', b.dataset.redit);
+  else if (b.dataset.rdel) delRule(b.dataset.rdel);
+});
+document.getElementById('rulesList').addEventListener('change', function (e) {
+  var t = e.target;
+  if (t && t.dataset && t.dataset.rtog) toggleRule(t.dataset.rtog, t.checked, t);
+});
+
+Array.prototype.forEach.call(document.querySelectorAll('#rfSched button'), function (b) {
+  b.onclick = function () { setSchedMode(b.dataset.mode); };
+});
+document.getElementById('rfType').addEventListener('change', function () {
+  document.getElementById('rfTypeTip').textContent = RULE_TYPE_HINT[this.value] || '';
+});
+document.getElementById('ruleCancel').onclick = closeRuleDlg;
+document.getElementById('ruleSave').onclick = function () { submitRule(this); };
+document.getElementById('ruleMask').addEventListener('click', function (e) {
+  if (e.target === this) closeRuleDlg();   // 点遮罩关闭
+});
+
+document.getElementById('btnRulesLog').onclick = function () {
+  var pre = document.getElementById('rulesLog');
+  var show = pre.style.display === 'none';
+  pre.style.display = show ? 'block' : 'none';
+  if (!show) return;
+  shell('rules', ['log', '80'], true).then(function (out) {
+    pre.textContent = asText(parseKV(out).b64 || '') || '（暂无更新日志）';
+    pre.scrollTop = pre.scrollHeight;
+  }).catch(function (e) { pre.textContent = e.message; });
+};
+
+document.getElementById('btnHostsSave').onclick = function () { saveHosts(this); };
+document.getElementById('btnUserSave').onclick = function () { saveUserFile(this); };
+
+Array.prototype.forEach.call(document.querySelectorAll('#rulesUserSeg button'), function (b) {
+  b.onclick = function () {
+    Array.prototype.forEach.call(document.querySelectorAll('#rulesUserSeg button'), function (x) {
+      x.classList.toggle('on', x === b);
+    });
+    ruleUI.userFile = b.dataset.ufile;
+    loadUserFile().catch(function (e) { toast(e.message, true); });
+  };
+});
+
+document.getElementById('btnDiag').onclick = function () {
+  var btn = this;
+  setBusy(btn, true, '诊断中…');
+  var lines = [
+    '桥接对象: ' + bridgeDiag.obj,
+    '调用形态: ' + bridgeDiag.variant,
+    '管理器  : ' + (bridgeDiag.manager || '(未读取)'),
+    '模块目录: ' + (MODDIR || '(未定位)'),
+    '自动重试: ' + (bridgeDiag.retries || 0) + ' 次' + (bridgeDiag.lastFail ? '（最近原因：' + bridgeDiag.lastFail + '）' : '')
+  ];
+  function report() { return info('桥接诊断', lines.join('\n')); }
+
+  // 第一项专门验证"多行会不会被截成最后一行"，这是最关键的判据
+  run('printf "L1\\nL2\\nL3\\n"', 8000)
+    .then(function (r) {
+      lines.push('--- 多行回传 ---');
+      lines.push('发送 3 行，收到: ' + JSON.stringify(str(r.stdout).trim()));
+      return shell('info');
+    })
+    .then(function (txt) {
+      var i = parseKV(txt);
+      lines.push('--- info (' + Object.keys(i).length + ' 字段) ---');
+      lines.push('manager=' + (i.manager || '?') + '  ver=' + (i.ver || '?') + '  arch=' + (i.arch || '?'));
+      if (i.manager) {
+        bridgeDiag.manager = i.manager;
+        lines[2] = '管理器  : ' + i.manager;
+      }
+      return shell('status');
+    })
+    .then(function (txt) {
+      var s = parseKV(txt);
+      lines.push('--- status (' + Object.keys(s).length + ' 字段) ---');
+      lines.push('running=' + (s.running || '?') + '  pid=' + (s.pid || '?') +
+        '  port=' + (s.main_port || '?') + '  ipt=' + (s.ipt || '?'));
+    })
+    .catch(function (e) {
+      lines.push('错误: ' + e.message);
+    })
+    .then(function () { setBusy(btn, false); return report(); });
+};
+
+document.getElementById('btnCheckUpstream').onclick = function () {
+  var btn = this;
+  setBusy(btn, true, '查询中…');
+  shell('upstream').then(function (out) {
+    var kv = parseKV(out);
+    var same = String(kv.latest || '').toLowerCase() === String(kv.current || '').toLowerCase();
+    info('上游版本', '当前内核：' + (kv.current || '未知') + '\n上游最新：' + (kv.latest || '未知') +
+      (same ? '\n\n已是最新版本。' : '\n\n有新版本可用，可替换模块内的 binary/arm 与 binary/arm64。'));
+  }).catch(function (e) {
+    toast(e.message, true);
+  }).then(function () { setBusy(btn, false); });
+};
+
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && state.tab === 'status') refreshStatus();
+});
+
+boot();
+})();
+</script>
+</body>
+</html>
