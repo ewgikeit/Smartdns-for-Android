@@ -13,8 +13,6 @@ readonly SCRIPT_INTERNAL_DIR="$DATA_BASE/scripts"
 BOOT_LOG="$MODDIR/boot.log"
 #脚本运行日志
 RUN_LOG="$MODDIR/script.log"
-#crontab日志
-readonly CROND_LOG="$SCRIPT_INTERNAL_DIR/bootTask/crond/crond.log"
 
 #脚本配置
 readonly SCRIPT_CONF="$DATA_INTERNAL_DIR/script_conf.sh"
@@ -105,6 +103,8 @@ wait_network() {
 # 开机任务
 bootTask() {
 	local lists file
+	# crond 链路删除后 bootTask 目录可能不存在（git 不跟踪空目录）
+	[ -d "$SCRIPT_INTERNAL_DIR/bootTask" ] || return 0
 	lists=`find $SCRIPT_INTERNAL_DIR/bootTask -mindepth 2 -name 'boot.sh'`
 	if [ -n "$lists" ]; then
 		for file in $lists; do

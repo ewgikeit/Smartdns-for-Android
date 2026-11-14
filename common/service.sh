@@ -10,8 +10,8 @@ esac
 cd "$MODDIR" || exit 1
 . $MODDIR/constant.sh
 
-# 日志清理
-rm -f $BOOT_LOG $RUN_LOG $CROND_LOG 2>/dev/null
+# 日志清理（crond 链路已删除，不再有 crond.log）
+rm -f $BOOT_LOG $RUN_LOG 2>/dev/null
 
 # 开机日志无条件落盘。
 # 原来只在 log=yes 时才重定向，结果是开机失败时 boot.log 压根不存在，

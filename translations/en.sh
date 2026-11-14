@@ -4,6 +4,8 @@ cat << HELP
 Usage: $CORE_NAME [ OPTIONS ]
   start
     Start service
+  restart
+    Restart service (same as stop + start)
   stop
     Stop service
   status
@@ -87,5 +89,5 @@ print_listenPort_not_set(){
 }
 
 print_iptRules_remove_errors(){
-	echo -e "[Error]: iptrules remove error.\n[Info]: Run \`$CORE_NAME -clean\` to reset network settings."
+	echo -e "[Error]: iptrules remove error.\n[Info]: Run \`$CORE_NAME clean\` to reset network settings."
 }

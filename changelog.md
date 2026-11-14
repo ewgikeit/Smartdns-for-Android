@@ -168,6 +168,26 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
 - 本地配套测试 `webui-tests/proxy-verify-test.sh`（13 项）：`ip -o` 解析、两种
   ifconfig 格式回退、循环次数、双栈校验的各失败分支、失败不返回 1。
 
+### 删除：cron 死链路（评审 W7）/ 修正 CLI 提示（W22）
+
+- **W7** 删掉 `scripts/cronTask/`（`GitHub.sh`、`Steam.sh`、`crond.reg`）与
+  `scripts/bootTask/crond/`。这条链路每 2 小时下载一次 hosts、转成 smartdns
+  格式写进 `config/hosts/{github,steam}.txt`，但**没有任何 `conf-file` 引用这两个
+  文件**——产物没人用，白占流量和 CPU；文件变化时还会 `reload_config` 白重启一次
+  内核。转换函数 `hosts2smartdns_sort_roll` 里的
+  `awk '$2 ~ /#/ /[\s\t]*[0-9]+[\s\t]*$/'` 在 gawk/mawk 下是语法错误（手机 toybox
+  能跑，CI/桌面不能），一并删除。同样的需求已经由 rulesrc 的 `github520` 源覆盖。
+  同步删掉 `CROND_LOG` 定义与 `service.sh` 里的清理，`bootTask()` 对目录不存在
+  做保护。
+- **W22** 清理失败时的提示写的是 `smartdns -clean`，但 `-clean` 不是合法参数
+  （真机实测只打印用法并返回 1）。中英文案统一改成 `smartdns clean`；顺带补上
+  `restart` 子命令（与 `start` 合并——`server_restart` 本来就是先停再起），
+  两个语言的 `--help` 都补了说明。
+- 本地配套测试 `webui-tests/dead-cron-test.sh`（12 项）：目录/函数/变量确实清空、
+  产物无引用、`bootTask` 保护、提示与帮助文本、`restart` 子命令。
+- 注：`README.md` 的目录树和第 319 行仍写着 cron 与 `-clean`，按约定这一轮不动
+  README，留给你自己改。
+
 ## 4.2.1
 
 只删代码，不改功能。**从这一版起不再兼容 4.0.0 之前的模块**，那批遗留迁移逻辑
