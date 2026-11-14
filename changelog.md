@@ -208,6 +208,22 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
 - 本地配套测试 `webui-tests/small-fixes-test.sh`（14 项）：包名精确匹配、
   bind-tcp 三种配置、逐行删除、settings 空值。
 
+### 修复：WebUI 临时配置权限 / 无效 set_perm（评审 W17 / W18）
+
+- **W17** WebUI 把用户配置（含上游、代理地址）base64 解码到
+  `/data/local/tmp/smartdns-webui.<pid>`，默认 umask 022 留下 **0644**，而
+  `/data/local/tmp` 全局可读——本机任何应用都能捡走完整配置。现在脚本开头
+  `umask 077`；临时目录挪到 `/data/local/tmp/$CORE_NAME/webui`，父目录
+  `chmod 0700`（连文件名都不给看），卸载脚本本来就会 `rm -rf` 这个父目录。
+  另外补一条 `rm -f /data/local/tmp/$CORE_NAME-webui.*`，清理老版本升级上来的
+  残留。正式配置写入后仍有显式 `chmod 0644`，不受 umask 影响。
+- **W18** `customize.sh` 对 `$CORE_INTERNAL_DIR/setuidgid` 做 `set_perm`，但包里
+  没有这个文件（`setuidgid` 是 toybox 命令，不是模块文件），安装日志里只会多一行
+  `No such file`。删掉该行，内核本体的权限设置保留。
+- 本地配套测试 `webui-tests/temp-perm-test.sh`（10 项）。权限位在 Windows 上
+  不可靠（chmod 近似 no-op），所以用静态约束锁住设计；真机行为由
+  `umask 077` + `chmod 0700` 保证。
+
 ## 4.2.1
 
 只删代码，不改功能。**从这一版起不再兼容 4.0.0 之前的模块**，那批遗留迁移逻辑

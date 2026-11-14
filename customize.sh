@@ -190,7 +190,8 @@ SKIPUNZIP=1
 	set_perm_recursive $MODPATH/defaults 0 0 0755 0644
 	set_perm $MODPATH/system/bin/$CORE_NAME 0 0 0755
 
-	set_perm $CORE_INTERNAL_DIR/setuidgid 0 0 0755
+	# 包里没有 setuidgid（toybox 自带，不是模块文件），set_perm 一个不存在的
+	# 路径只会在安装日志里留一行 No such file，没有任何作用。
 	set_perm $CORE_INTERNAL_DIR/$CORE_NAME 0 0 0755
 
 	set_perm_recursive $DATA_INTERNAL_DIR 0 $(id -g radio) 0755 0644
