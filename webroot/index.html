@@ -1497,7 +1497,7 @@ function loadRules() {
 // 这里只负责发起，然后靠 running 标记轮询进度。
 function rulesUpdate(id, btn) {
   if (btn) setBusy(btn, true, '…');
-  return shell('rules', ['update', id]).then(function () {
+  return shell('rules', ['update', q(id)]).then(function () {
     document.getElementById('rulesHint').textContent = '正在更新…';
     toast(id === 'all' ? '已开始更新全部源' : '已开始更新 ' + id);
     clearTimeout(ruleUI.timer);

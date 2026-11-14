@@ -446,6 +446,28 @@ log_missing_hint() {
 	return 0
 }
 
+# 保存前的内核级校验：smartdns -t 只解析配置，不监听、不碰缓存。
+# 临时文件必须落在正式配置同目录：conf-file 全是相对路径
+# （./ip/...、./domain_diverg/...、./rules/...），换个目录就全打不开，
+# 好配置也会被判成坏配置。
+# 老版本内核没有 -t 时输出会带 Usage/unknown option，此时不拿它挡保存。
+conf_check_tmp() {
+	local src="$1" ck="$DATA_INTERNAL_DIR/.webui-check.conf" out rc
+	[ -x "$CORE_BIN" ] || return 0
+	cp -f "$src" "$ck" 2>/dev/null || return 0
+	out=$(cd "$DATA_INTERNAL_DIR" && "$CORE_BIN" -c "$ck" -t 2>&1)
+	rc=$?
+	rm -f "$ck"
+	[ "$rc" -eq 0 ] && return 0
+	case "$out" in
+		*'nknown option'*|*'nvalid option'*|*'Usage:'*)
+			return 0
+			;;
+	esac
+	printf '%s\n' "$out" | tail -n 4
+	return 1
+}
+
 do_put() {
 	local name="$1" b64="$2" tmp
 	[ "$name" = 'smartdns.conf' ] || err "不允许写入该文件: $name"
@@ -482,6 +504,16 @@ do_put() {
 		rm -f "$tmp"
 		err "配置里 [::]:$dup 与 0.0.0.0:$dup 同时 bind，Android 下 IPv6 是双栈，内核会报 Address in use。二选一即可（推荐只保留 bind [::]:$dup）。"
 	fi
+
+	# 审查 W20：上面只拦了「没有 bind」和双栈冲突，拼错的指令、坏掉的
+	# conf-file 引用要等重启失败才知道，只能靠看门狗反复试。保存前让内核
+	# 自己解析一遍（-t：不监听、不碰缓存），有问题直接退回给前端。
+	local check_msg
+	check_msg=$(conf_check_tmp "$tmp") || {
+		rm -f "$tmp"
+		err "配置未通过内核校验，已放弃写入：
+${check_msg:-（内核未给出原因）}"
+	}
 
 	# 校验通过后才覆盖备份，避免一次失败写入把上一版备份也弄丢
 	[ -f "$CONF" ] && cp -f "$CONF" "$WEBUI_BAK"
