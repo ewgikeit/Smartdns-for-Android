@@ -127,15 +127,11 @@ is_running() {
 	pidof "$CORE_NAME" >/dev/null 2>&1
 }
 
-# 与 command.sh 的 iptrules_check 保持一致的判定
-# 端口为空时不拼进正则（空分支会让任意 REDIRECT 命中），并锚定 --to-ports
+# 与 command.sh 的 iptrules_check 保持一致：看 OUTPUT 里有没有指向自建链的跳转。
+# 不再按 --to-ports 扫全表 —— 旧格式规则会让它恒为真，状态页会误报「已生效」
+# （复审 4.2.3 §三.3）。
 ipt_active() {
-	local p1="$1" p2="$2"
-	[ -n "$p1" ] || return 1
-	if [ -n "$p2" ] && [ "$p2" != "$p1" ]; then
-		p1="$p1|$p2"
-	fi
-	iptables -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ($p1)$"
+	iptables -t nat -S OUTPUT 2>/dev/null | grep -qE -- '-j dns_redirect$'
 }
 
 # 预建运行环境，避免 command.sh 首次启动时进入最长 10 分钟的联网等待
