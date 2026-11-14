@@ -38,7 +38,9 @@
 `conf_bind_set` 原来靠「最后一个冒号」定位端口，`bind 6053` 没有冒号 →
 整行跳过 → 仍 `return 0`，界面显示「已同步」，内核还在听旧端口。
 
-- 支持无冒号写法、`@device` 后缀、CRLF 换行；
+- 支持无冒号写法、`@device` 后缀；`conf_bind_set` 与 `conf_bind_port`
+  都处理 CRLF 行尾（真机 toybox awk 不剥 `\r`，只改写不修正读取的话，
+  回读校验会失败并回滚）；
 - `set_one` 写完回读 `conf_bind_port`，与目标不一致就回滚并报错；
 - `bp` 补 `local`，不再污染全局。
 
