@@ -277,7 +277,7 @@ su -c 'sh /data/adb/modules/smartdns/command.sh rulesrc merge'        # 只重�
 local         : 本机发出到53端口的数据包重定向到 Main_PORT (默认)
 proxy         : 发往本机53端口的数据包重定向到 Second_PORT
 local,proxy   : 结合上面俩项
-server        : 仅启动服务器 (任务脚本照常运行)
+server        : 仅启动服务器 (不安装防火墙规则)
 ```
 
 PKG 介绍
@@ -288,25 +288,13 @@ IP6T_BLOCK 介绍
 
 - IPv6 重定向需要运行完全支持 ip6tables(CONFIG_IP6_NF_*) 的内核的 Android 设备，大多数情况下您必须自己编译内核。如果您的设备内核不支持，会自动转为封锁。
 
-### 任务脚本
+### 规则源定时更新
 
-在设定时间执行 shell 脚本。文件结构遵循下面的示例。
+规则源（含内置的 github520 等）按各自设定的间隔更新，调度挂在看门狗循环里，
+不再依赖 crond；更新只重写 `config/rules/`，不会重启内核。
 
-```txt
-/data/adb/smartdns/scripts
- │      *** 开机任务脚本 ***
- ├─── bootTask
- │   ├─── crond             <--- 任务目录
- │   │   └─── boot.sh       <--- 主脚本 (名称必须为 boot.sh)
- │   └─── ...
- │      *** 定时任务脚本 ***
- ├─── cronTask
- │   ├─── hosts_update      <--- 任务目录
- │   │   ├─── crond.reg     <--- 注册执行时间 (名称必须为 crond.reg)
- │   │   └─── GitHub.sh     <--- 脚本
- │   └─── ...
- └─── lib.sh                <--- 常用脚本函数
-```
+在 WebUI 的「规则源」里配置，或执行 `smartdns rulesrc update all` 手动触发；
+`smartdns rules` 只重装防火墙规则，不动内核进程。
 
 ### 使用&配置 建议
 
@@ -316,7 +304,7 @@ IP6T_BLOCK 介绍
 
 ## 异常解决
 
-- 点击清理规则或使用 `smartdns -clean` 命令清理。这会尝试将 iptables 恢复至开机后首次启动时记录的状态，会对使用到 iptables 的程序造成一些影响。
+- 点击清理规则或使用 `smartdns clean` 命令清理。这会尝试将 iptables 恢复至开机后首次启动时记录的状态，会对使用到 iptables 的程序造成一些影响。
 
 ### 代理类应用兼容性
 

@@ -4,13 +4,15 @@ SKIPUNZIP=1
 	# 只从管理器安装
 	[ "$BOOTMODE" == 'true' ] || abort "[Error]: Please install from Magisk Manager."
 
-	# 冲突判断
-	[ "$API" -ge 28 -a $(settings get global private_dns_mode) != 'off' ] && {
+	# 冲突判断。settings 可能不存在或返回 null/空，直接用 $(...) 拼进 test
+	# 会在某些设备上变成 `test -ge 28 -a != off` —— 语法错误，安装直接中断。
+	priv_dns=$(settings get global private_dns_mode 2>/dev/null)
+	if [ "$API" -ge 28 ] && [ -n "$priv_dns" ] && [ "$priv_dns" != 'off' ] && [ "$priv_dns" != 'null' ]; then
 		ui_print "****************"
 		ui_print '(!) 请关闭私人DNS以防止冲突'
 		ui_print '(!) Please close the Private DNS to prevent conflict.'
 		ui_print "****************"
-	}
+	fi
 
 	ui_print "- Extracting module files"
 

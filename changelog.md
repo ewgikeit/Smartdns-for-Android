@@ -185,8 +185,28 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
   两个语言的 `--help` 都补了说明。
 - 本地配套测试 `webui-tests/dead-cron-test.sh`（12 项）：目录/函数/变量确实清空、
   产物无引用、`bootTask` 保护、提示与帮助文本、`restart` 子命令。
-- 注：`README.md` 的目录树和第 319 行仍写着 cron 与 `-clean`，按约定这一轮不动
-  README，留给你自己改。
+
+### 修复：包名匹配 / 注释识别 / 逐行删除 / settings 空值（评审 W9 / W14 / W16 / W19）
+
+- **W9** `iptrules_accept` 把包名直接丢给 `grep -m1 -i $uid`：包名里的 `.`
+  会被当正则（`com.foo` 能匹配 `comXfoo`），含空格会被拆词，以 `-` 开头会被当
+  选项。改成 `awk '$1 == u'` 按 `packages.list` 第一列整列匹配，找不到就是空，
+  调用方跳过。
+- **W14** `awk '!/#/ && /bind-tcp/'`：行内只要有 `#` 就整行跳过，
+  `bind-tcp [::]:6053 # 注释` 会被判成「没开 tcp」，于是只装 udp 规则。改成
+  先 `sub(/#.*/,"")` 剥注释、再按行首 `bind-tcp` 指令匹配。
+- **W16** `clean` 里的 ``rm `awk …` `` 未加引号：路径带空格或一行多值会被拆成
+  多个参数，root 下误删面偏大。改成 awk 逐行输出 + `while IFS= read -r p` +
+  `rm -f -- "$p"`。
+- **W19** `customize.sh` 把 `$(settings get global private_dns_mode)` 直接拼进
+  `test`：`settings` 不存在或返回空时变成 `test -ge 28 -a != off`，语法错误。
+  改成先取 `priv_dns`，再分别判断 `-n`、`!= off`、`!= null`。
+- **W21** 复核：`iptrules_off` 及其调用的 `_del_all` 在 C1/C2 修复时已全部带
+  `2>/dev/null` 与 `|| true`，无需再改。
+- `README.md` 同步：删除 cron 目录树（改为「规则源定时更新」说明）、
+  `smartdns -clean` → `smartdns clean`、server 模式说明改为「不安装防火墙规则」。
+- 本地配套测试 `webui-tests/small-fixes-test.sh`（14 项）：包名精确匹配、
+  bind-tcp 三种配置、逐行删除、settings 空值。
 
 ## 4.2.1
 

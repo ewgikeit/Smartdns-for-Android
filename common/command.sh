@@ -997,8 +997,14 @@ iptrules_accept() {
 	[ "$allow_root" = 'yes' ] && list="0 $list"
 	for uid in $list $PKG
 	do
-		# 包名转换UID
-		echo "$uid" |grep -q -i '[a-z]' && uid=$(grep -m1 -i $uid /data/system/packages.list |cut -d' ' -f2)
+		# 包名转换UID。不能把包名直接丢给 grep：包名里的 `.` 会被当正则
+		# （`com.foo` 能匹配 `comXfoo`），含空格会被拆词，以 `-` 开头会被当选项。
+		# 按第一列整列匹配，找不到就是空（调用方会跳过）。
+		case "$uid" in
+			*[a-zA-Z]*)
+				uid=$(awk -v u="$uid" '$1 == u { print $2; exit }' /data/system/packages.list 2>/dev/null)
+				;;
+		esac
 		# 不存在则跳过
 		[ -z "$uid" ] && continue
 		${ipt} -w 5 -t ${tables} ${action} ${chains} -m owner --uid-owner ${uid} -j RETURN
@@ -1611,8 +1617,14 @@ get_args() {
 			server_stop
 			server_stop  
 			print_reset_network
-			# 移除缓存持久化
-			rm `awk '!/#/ && /cache-file/ {print $2}' $CONF_FILE 2>/dev/null` 2>/dev/null
+			# 移除缓存持久化。逐行删：路径带空格、或一行写了多个值，
+			# 也不会被拆成多个参数（root 下 rm 误删面太大）
+			awk '{ sub(/#.*/, "") } $1 == "cache-file" { print $2 }' "$CONF_FILE" 2>/dev/null | \
+			while IFS= read -r p; do
+				if [ -n "$p" ]; then
+					rm -f -- "$p"
+				fi
+			done
 			;;
 
 		--mode) # 工作模式
@@ -1791,7 +1803,13 @@ get_args() {
 	# 未设置代理端口 使用主端口
 	port_valid "$Second_PORT" || Second_PORT="$Main_PORT"
 	# 未tcp端口设置 不使用tcp规则 # (?<!#\s*)bind-tcp.*\:+
-	[ -n "`awk '!/#/ && /bind-tcp/' $CONF_FILE 2>/dev/null`" ] && readonly packet_type='udp tcp' || readonly packet_type='udp'
+	# 行内注释会骗过 `!/#/`：`bind-tcp [::]:6053 # 注释` 会被判成没开 tcp，
+	# 于是只装 udp 规则。先剥注释再匹配，并锚定行首的 bind-tcp 指令。
+	if awk '{ sub(/#.*/, "") } /^[ \t]*bind-tcp[ \t]/ { found = 1; exit } END { exit !found }' "$CONF_FILE" 2>/dev/null; then
+		readonly packet_type='udp tcp'
+	else
+		readonly packet_type='udp'
+	fi
 	# 检查IPv6 nat支持
 	[ "$IP6T_BLOCK" == 'no' ] && { ip6tables -w 5 -t nat -S >/dev/null 2>&1 || { print_kernel_not_support; IP6T_BLOCK='yes'; }; }
 
