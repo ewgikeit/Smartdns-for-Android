@@ -150,6 +150,24 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
 - 本地配套测试 `webui-tests/backup-lock-test.sh`（18 项）：干净/脏快照、save 失败、
   备份可用性判定、锁的抢占/接管/空 pid/并发启动只活一个。
 
+### 修复：proxy 取址只跑一次 / 规则装了没装没人知道（评审 W8 / W15）
+
+- **W8** `for IP in "$(ifconfig …)"` 的引号把多行输出合成**一个**词，循环只迭代
+  1 次；随后 `iptables -d ${IP}` 收到整串地址必然失败，proxy 模式按目的地放行的
+  规则基本没装上。新增 `local_v4_addrs()`：优先 `ip -o -4 addr show`（一行一个、
+  字段稳定），没有 `-o` 时退回 `ifconfig`，新老两种输出格式（`inet addr:` 与
+  `inet x.x.x.x/len`）都认，并去掉掩码；调用处不加引号分词，私网过滤从
+  grep 正则改成 `case`（原正则 `(^192\.168\.*)` 的 `\.*` 其实是「零或多个点」）。
+- **W15** `iptrules_on` 里每条 iptables 都没检查返回值：ROM 不支持 nat 表、或规则
+  被别的工具锁住时，会「静默装了个寂寞」，服务照样报启动成功。新增
+  `iptrules_verify()`，装完分别验 v4 的 `OUTPUT → dns_redirect` 和 v6 的
+  `dns_block`（封锁模式）/ `dns_redirect`；失败写 `boot.log` 并打印警告。
+  **故意不返回 1**：返回 1 会让 `server_restart` 判定整个启动失败，看门狗转头去
+  重启一个其实在正常解析的服务；规则缺失会被看门狗自己的 `iptrules_check`
+  发现并按 30s → 5min 的间隔重装。
+- 本地配套测试 `webui-tests/proxy-verify-test.sh`（13 项）：`ip -o` 解析、两种
+  ifconfig 格式回退、循环次数、双栈校验的各失败分支、失败不返回 1。
+
 ## 4.2.1
 
 只删代码，不改功能。**从这一版起不再兼容 4.0.0 之前的模块**，那批遗留迁移逻辑

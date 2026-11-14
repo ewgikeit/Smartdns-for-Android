@@ -629,6 +629,37 @@ conf_rules_fix() {
 }
 
 ## 防火墙部分
+
+# 取本机 IPv4 地址（proxy 模式按目的地放行用）。
+# `ip -o -4 addr` 一行一个地址、字段稳定；老系统没有 -o 时退回 ifconfig。
+# 调用方必须写 `for IP in $(local_v4_addrs)`（不加引号）——原来写的是
+# `for IP in "$(ifconfig …)"`，多行被当成一个词，循环只跑 1 次，随后
+# `iptables -d ${IP}` 拿到整串地址必然失败（真机实测只迭代 1 次）。
+local_v4_addrs() {
+	local out
+	if out=$(ip -o -4 addr show 2>/dev/null) && [ -n "$out" ]; then
+		printf '%s\n' "$out" | awk '
+			{ for (i = 1; i <= NF; i++) if ($i == "inet") { a = $(i + 1); sub(/\/.*/, "", a); print a; break } }'
+		return 0
+	fi
+	ifconfig 2>/dev/null | awk '
+		/inet addr:/ { sub(/^.*inet addr:/, ""); sub(/[ \t].*/, ""); print; next }
+		/^[ \t]*inet / { a = $2; sub(/\/.*/, "", a); print a }'
+}
+
+# 装完之后的验证：v4 必须有 OUTPUT → dns_redirect 的跳转；v6 按模式看
+# dns_block / dns_redirect。缺哪边就记哪边。
+iptrules_verify() {
+	local bad=''
+	iptables -w 5 -t nat -S OUTPUT 2>/dev/null | grep -q 'dns_redirect' || bad='v4'
+	if [ "$IP6T_BLOCK" = 'yes' ]; then
+		ip6tables -w 5 -t filter -S OUTPUT 2>/dev/null | grep -q 'dns_block' || bad="$bad v6"
+	else
+		ip6tables -w 5 -t nat -S OUTPUT 2>/dev/null | grep -q 'dns_redirect' || bad="$bad v6"
+	fi
+	[ -z "$bad" ]
+}
+
 iptrules_on() {
 	if [[ "$MODE" != *'local'* && "$MODE" != *'proxy'* ]]; then
 		return 0
@@ -675,6 +706,17 @@ iptrules_on() {
 			ip6tables -w 5 -t nat -A POSTROUTING -p ${IPP} -m mark --mark 0x853 -j SNAT --to-source '::1'
 		done
 	fi
+
+	# 审查 W15：上面每条 iptables 都没检查返回值。ROM 不支持 nat 表、规则被
+	# 别的工具锁住时，这里会「静默装了个寂寞」，而服务照样报启动成功。
+	# 装完验证一次：失败只记 boot.log + 打印警告，**不返回 1** —— 返回 1 会让
+	# server_restart 判定整个启动失败，看门狗转头去重启一个其实在正常解析的服务。
+	# 规则缺失会被看门狗自己的 iptrules_check 发现并重装（失败间隔逐步拉长）。
+	if ! iptrules_verify; then
+		boot_note "[firewall] 规则未装全 (MODE=$MODE)：nat 表可能不支持，或规则被其他工具占用"
+		echo '[警告]: 防火墙规则未生效（详见 boot.log），DNS 可能没有被接管。'
+	fi
+	return 0
 }
 
 
@@ -912,12 +954,14 @@ iptrules_load() {
 		for IPP in $packet_type
 		do
 			if [ "$ipt" == 'iptables' ]; then
-				# 获取本机IP
-				IP=''; for IP in "$(ifconfig |grep "inet addr" |grep -v ":127" |grep "Bcast" |awk '{print $2}' |awk -F: '{print $2}')"
-				do
-					echo $IP |grep -q -E '(^192\.168\.*)|(^10\.*)|(^172\.(1[6-9]|2[0-9]|3[0-1])\.*)' || continue
+				# 获取本机IP（一行一个，未加引号才不会被当成一个词）
+				for IP in $(local_v4_addrs); do
+					case "$IP" in
+						192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) ;;
+						*) continue ;;
+					esac
 					# v4 安全代理
-					${ipt} -w 5 -t nat ${action} PREROUTING -i wlan+ -p ${IPP} -d ${IP} --dport 53 -j REDIRECT --to-ports ${Second_PORT}
+					${ipt} -w 5 -t nat ${action} PREROUTING -i wlan+ -p ${IPP} -d "${IP}" --dport 53 -j REDIRECT --to-ports ${Second_PORT}
 				done
 			# else
 			# v6 代理 停用
