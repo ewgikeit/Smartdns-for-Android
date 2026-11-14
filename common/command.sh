@@ -307,27 +307,33 @@ port_busy() {
 	return 1
 }
 
-# 从 ss 的输出里找 socket inode 的属主（快路径）。
-# ss 一次就能列出全机 socket 并直接给 pid，比遍历 /proc 快两个数量级。
-# toybox 的 ss 不一定编译了 -p / ino，拿不到 pid= 就老实返回失败，
-# 交给下面的 /proc 兜底——绝不因为快路径失败就报「无人占用」。
+# 从 ss 的输出里找端口的属主（快路径）。
+# 复审 R6：不能靠 `ino:` —— toybox 的 ss 输出里根本没有这个字段
+# （`udp UNCONN 0 0 *:6053 *:* users:(("smartdns",pid=9904,fd=9))`），
+# 按 inode 匹配 100% 落空，白白落到 9 秒的 /proc 兜底。改成只看本地地址端口：
+# 第 5 列形如 `*:6053` / `127.0.0.1:6053`，取最后一个冒号后的数字精确比较。
+# 拿不到 `pid=`（没编译 -p / 无权限）时老实返回失败，交给 /proc 兜底。
 port_owner_ss() {
-	local i dump out pid P
+	local port="$1" dump pid P
 	P="${PROC_ROOT:-/proc}"
 	command -v ss >/dev/null 2>&1 || return 1
+	[ -n "$port" ] || return 1
 	dump=$(ss -a -n -p 2>/dev/null) || return 1
 	[ -n "$dump" ] || return 1
-	for i in "$@"; do
-		out=$(printf '%s\n' "$dump" | grep -F "ino:$i" | head -n 1)
-		[ -n "$out" ] || continue
-		pid=$(printf '%s\n' "$out" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n 1)
-		[ -n "$pid" ] || continue
-		printf '%s %s %s\n' "$pid" \
-			"$(cat "$P/$pid/comm" 2>/dev/null)" \
-			"$(readlink "$P/$pid/exe" 2>/dev/null)"
-		return 0
-	done
-	return 1
+	pid=$(printf '%s\n' "$dump" | awk -v p="$port" '
+		$5 ~ /:[0-9]+$/ {
+			a = $5
+			sub(/^.*:/, "", a)
+			if (a == p && match($0, /pid=[0-9]+/)) {
+				print substr($0, RSTART + 4, RLENGTH - 4)
+				exit
+			}
+		}')
+	[ -n "$pid" ] || return 1
+	printf '%s %s %s\n' "$pid" \
+		"$(cat "$P/$pid/comm" 2>/dev/null)" \
+		"$(readlink "$P/$pid/exe" 2>/dev/null)"
+	return 0
 }
 
 # /proc 兜底路径：一次 ls 取回全机 fd 的符号链接，再用一次 awk 匹配 inode。
@@ -378,9 +384,8 @@ port_owner() {
 	inodes=$(printf '%s' "$inodes" | tr -s ' ' | sed 's/^ //; s/ $//')
 	[ -n "$inodes" ] || return 1
 
-	# $inodes 已清洗成空格分隔的数字，需要分词传给快路径
-	# shellcheck disable=SC2086
-	port_owner_ss $inodes && return 0
+	# 快路径按端口匹配（toybox ss 没有 ino: 字段，按 inode 会 100% 落空）
+	port_owner_ss "$1" && return 0
 
 	hit=$(port_owner_proc "$inodes" 2>/dev/null) || return 1
 	pid=${hit%% *}
@@ -668,6 +673,11 @@ iptrules_on() {
 	#  IPv4
 	# 建链 dns_redirect
 	iptables -w 5 -t nat -N dns_redirect
+	# 复审 R5：proxy 规则单独建一条自建链，清理时 -F/-X 就精确到「自己的东西」，
+	# 不用再按 --to-ports 扫全表（那会把同端口的第三方规则一起删掉）。
+	if [[ "$MODE" == *'proxy'* ]]; then
+		iptables -w 5 -t nat -N dns_proxy
+	fi
 	# 加载重定向规则
 	iptrules_load 'iptables' '-A'
 	# 外链
@@ -749,22 +759,20 @@ _del_all() {
 # 清理成功反而让函数返回 1；log=yes 时 command.sh 带 set -ex，直接中断 start/stop。
 # 循环去掉后这个问题自然消失，函数恒定 return 0。
 iptrules_off() {
-	local IPP spec
+	local IPP
 	#  IPv4
 	for IPP in $packet_type; do
 		_del_all iptables -t nat -D OUTPUT -p ${IPP} --dport 53 -j dns_redirect
 		_del_all iptables -t nat -D POSTROUTING -p ${IPP} -m mark --mark 0x853 -j SNAT --to-source 127.0.0.1
 	done
-	# proxy 模式装的是 PREROUTING 跳转，规格里带 -d <本机IP>，IP 变了就删不掉，
-	# 因此按「目标端口」从 -S 里反查整条规格再原样 -D（审查 C2）
-	if [ -n "$Second_PORT" ]; then
-		iptables -w 5 -t nat -S PREROUTING 2>/dev/null | sed -n 's/^-A /-D /p' | \
-		while read -r spec; do
-			case "$spec" in
-				*"--to-ports ${Second_PORT}") iptables -w 5 -t nat $spec 2>/dev/null || true ;;
-			esac
-		done
-	fi
+	# 复审 R5：proxy 规则现在都在 dns_proxy 自建链里，删跳转 + 清链 + 删链即可。
+	# 不再按 --to-ports 扫全表 —— 那会把「同端口但不是我装的」规则一起删掉
+	# （真机验证：手工加一条 PREROUTING REDIRECT --to-ports 6053，跑一次 rules 就没了）。
+	for IPP in $packet_type; do
+		_del_all iptables -t nat -D PREROUTING -i wlan+ -p ${IPP} --dport 53 -j dns_proxy
+	done
+	iptables -w 5 -t nat -F dns_proxy 2>/dev/null || true
+	iptables -w 5 -t nat -X dns_proxy 2>/dev/null || true
 	# 审查 C5 补充：log=yes 时 main 带 set -ex，真机上 `-F` 因为链已不存在返回 1，
 	# 直接把 stop 打断（内核没停、标记已置）。清理里的每条命令都必须吞掉退出码。
 	iptables -w 5 -t nat -F dns_redirect 2>/dev/null || true
@@ -787,28 +795,38 @@ iptrules_off() {
 	return 0
 }
 
-# 清完再验一次（审查 C1 的验收标准）：nat 表里只要还有指向本模块端口的 REDIRECT，
-# 就把这些跳转整条扫出来再删一遍，并留一条 boot.log。只告警，绝不 exit。
+# 清完再验一次（审查 C1 的验收标准）。
+# 复审 R5：只处理本模块的自建链与指向它们的跳转，绝不按 --to-ports 扫全表去删
+# 「看起来像我的」规则 —— 同端口的第三方规则会被误伤。只告警，绝不 exit。
 iptrules_assert_clear() {
-	local p spec left=''
-	for p in $Main_PORT $Second_PORT; do
-		[ -n "$p" ] || continue
-		iptables -w 5 -t nat -S 2>/dev/null | sed -n 's/^-A /-D /p' | \
-		while read -r spec; do
-			case "$spec" in
-				*"--to-ports ${p}"*) iptables -w 5 -t nat $spec 2>/dev/null || true ;;
-			esac
-		done
-		# 用 if 而不是 `cmd && 语句`：log=yes 时 shell 带 set -e，
-		# 一个「没匹配到」的 grep 就能把整个 stop 打断
-		if iptables -w 5 -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ${p}$"; then
-			left="$left ${p}/v4"
-		fi
+	local left='' ch
+	for ch in dns_redirect dns_proxy; do
+		iptables -w 5 -t nat -F "$ch" 2>/dev/null || true
+		iptables -w 5 -t nat -X "$ch" 2>/dev/null || true
 	done
+	ip6tables -w 5 -t nat -F dns_redirect 2>/dev/null || true
+	ip6tables -w 5 -t nat -X dns_redirect 2>/dev/null || true
+	ip6tables -w 5 -t filter -F dns_block 2>/dev/null || true
+	ip6tables -w 5 -t filter -X dns_block 2>/dev/null || true
+
+	# 用 if 而不是 `cmd && 语句`：log=yes 时 shell 带 set -e，
+	# 一个「没匹配到」的 grep 就能把整个 stop 打断
+	if iptables -w 5 -t nat -S 2>/dev/null | grep -qE -- '-j (dns_redirect|dns_proxy)$'; then
+		left="$left v4"
+	fi
+	if [ "$IP6T_BLOCK" = 'yes' ]; then
+		if ip6tables -w 5 -t filter -S 2>/dev/null | grep -qE -- '-j dns_block$'; then
+			left="$left v6-block"
+		fi
+	else
+		if ip6tables -w 5 -t nat -S 2>/dev/null | grep -qE -- '-j dns_redirect$'; then
+			left="$left v6-redirect"
+		fi
+	fi
 	if [ -z "$left" ]; then
 		return 0
 	fi
-	boot_note "防火墙规则有残留:${left}（已强制清理，仍残留请重启设备）"
+	boot_note "防火墙规则有残留:${left}（自建链未能完全清除，请重启设备）"
 	return 0
 }
 
@@ -950,10 +968,13 @@ iptrules_load() {
 	
 	
 	# PROXY
+	# 复审 R5：规则全部写进自建链 dns_proxy，PREROUTING 只留一条跳转。
+	# 这样清理时 -F/-X 能精确到「本模块装的东西」，不会误删其它工具的同端口规则。
 	if [[ "$MODE" == *'proxy'* ]]; then
 		for IPP in $packet_type
 		do
 			if [ "$ipt" == 'iptables' ]; then
+				${ipt} -w 5 -t nat ${action} PREROUTING -i wlan+ -p ${IPP} --dport 53 -j dns_proxy
 				# 获取本机IP（一行一个，未加引号才不会被当成一个词）
 				for IP in $(local_v4_addrs); do
 					case "$IP" in
@@ -961,7 +982,7 @@ iptrules_load() {
 						*) continue ;;
 					esac
 					# v4 安全代理
-					${ipt} -w 5 -t nat ${action} PREROUTING -i wlan+ -p ${IPP} -d "${IP}" --dport 53 -j REDIRECT --to-ports ${Second_PORT}
+					${ipt} -w 5 -t nat ${action} dns_proxy -d "${IP}" -p ${IPP} --dport 53 -j REDIRECT --to-ports ${Second_PORT}
 				done
 			# else
 			# v6 代理 停用
@@ -1331,6 +1352,21 @@ restart_in_progress() {
 # 用户主动停止会写 $STOP_FLAG，此时看门狗完全不干预。
 # 健康判定直接看进程 + 防火墙规则，不调用 status 子进程——
 # 否则每 30 秒都会往 script.log 里刷一遍状态文本。
+# 锁里的 pid 必须确实是本模块的看门狗。
+# pid 是顺序分配的，`kill -0` 只能证明「有个进程」，证明不了「这个进程是
+# 看门狗」——陈旧锁里的数字很可能落到 init、logd 之类的常驻进程上。
+# 复审 R1：只校验存活会导致看门狗静默永不启动（rc=0、日志还被丢进 /dev/null）。
+watch_owner_alive() {
+	local pid="$1" cmd
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null || return 1
+	cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+	case "$cmd" in
+		*command.sh\ watch*) return 0 ;;
+	esac
+	return 1
+}
+
 # 看门狗单实例（原子判定）：mkdir 成功才算拿到锁。
 # 原实现只扫 /proc，有两个口子：
 #   1. 两个进程同时启动、都还没扫到对方 → 都通过，之后每 30 秒互杀一次；
@@ -1338,6 +1374,8 @@ restart_in_progress() {
 # 扫描现在只作兜底，处理「锁是上次强杀留下的」和「pid 被复用」的情况。
 watch_enter() {
 	local lk="$WATCH_LOCK" owner='' i=0
+	# 锁在 /dev/<模块名>/ 下，手跑 watch 或挂载丢失时目录可能不存在
+	mkdir -p "${lk%/*}" 2>/dev/null
 	if ! mkdir "$lk" 2>/dev/null; then
 		# 抢锁失败：mkdir 与写 pid 之间有几毫秒空窗，等对方写完再判断
 		while [ "$i" -lt 5 ]; do
@@ -1348,11 +1386,11 @@ watch_enter() {
 			sleep 0.2 2>/dev/null || sleep 1
 			i=$((i + 1))
 		done
-		if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+		if watch_owner_alive "$owner"; then
 			echo "[watchdog] 已有看门狗在运行 (pid $owner)，本次退出"
 			return 1
 		fi
-		# pid 无效 = 上次被强杀留下的锁，接管
+		# pid 已死、或已被别的进程复用 = 陈旧锁，接管
 		rm -rf "$lk"
 		if ! mkdir "$lk" 2>/dev/null; then
 			return 1
@@ -1613,9 +1651,8 @@ get_args() {
 			else
 				boot_note '[clean] iptables 备份缺失或不干净，跳过 restore（只清自建链）'
 			fi
-			# 停止服务器
+			# 停止服务器（复审 R7：这里原来连着写了两遍 server_stop）
 			server_stop
-			server_stop  
 			print_reset_network
 			# 移除缓存持久化。逐行删：路径带空格、或一行写了多个值，
 			# 也不会被拆成多个参数（root 下 rm 误删面太大）

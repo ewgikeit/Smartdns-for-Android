@@ -1,5 +1,70 @@
 # 更新日志
 
+## 未发布
+
+按 `code-review-4.2.2.md` 复审意见修复 R1–R7（4.2.2 之后的补丁，未发版）。
+
+### 修复：看门狗在 pid 复用下静默不启动（复审 R1，Critical）
+
+4.2.2 的锁放在持久目录 `$DATA_BASE`，里面只有 pid，只校验进程存活。断电或
+`kill -9` 留下的锁会跨开机存活，pid 很可能已被 init/logd 这类常驻进程复用 →
+新看门狗判定「已有实例运行」直接退出，**rc=0、日志还被 service.sh 丢进
+`/dev/null`**，结果是一个看门狗都没有，规则刷新与防火墙自愈一起消失。
+
+- 锁改到 `$WORK_DIR`（`/dev` 是 tmpfs，重启即空），从根上消除跨开机残留；
+- 新增 `watch_owner_alive()`：锁里的 pid 必须能从 `/proc/<pid>/cmdline` 看到
+  `command.sh watch` 才算数，否则视为陈旧锁接管；
+- `service.sh` 不再用 `$!` 记日志（那是 `setsid` 的 pid），改为回读锁里的 pid
+  并核对 cmdline，启不来时明确写「未启动」。
+
+### 修复：conf-file 缺失被硬拒绝（复审 R2）
+
+4.2.2 把 `conf-file` 指向不存在的文件当作错误拒绝保存。内核对此是宽容的
+（照常启动，只是那段规则缺失），老配置升级后哪怕只改一行上游也存不进去。
+
+- `conf_check_tmp` 改为三态返回：`0` 通过 / `1` 硬错误（bind 端口越界）/
+  `2` 可确认警告（`conf-file` 缺失）；
+- `do_put` 支持 `force` 参数：警告时前端弹一次确认，同意后带 `force` 重试；
+- 含 glob 元字符（`*` `?` `[`）的路径跳过存在性判断。
+
+### 修复：截断的配置可以被保存，覆盖掉前半段（复审 R3）
+
+`do_cat` 超过 64KB 只回末尾，编辑器里就是这半份内容，点保存会把前半段静默
+覆盖掉。前端现在记录 `state.confTruncated`，截断时直接禁止保存并提示改用
+`conf-file`。
+
+### 修复：`bind 6053` 改写静默失败却回报成功（复审 R4）
+
+`conf_bind_set` 原来靠「最后一个冒号」定位端口，`bind 6053` 没有冒号 →
+整行跳过 → 仍 `return 0`，界面显示「已同步」，内核还在听旧端口。
+
+- 支持无冒号写法、`@device` 后缀、CRLF 换行；
+- `set_one` 写完回读 `conf_bind_port`，与目标不一致就回滚并报错；
+- `bp` 补 `local`，不再污染全局。
+
+### 修复：清理会删掉第三方同端口规则（复审 R5）
+
+`iptrules_off` 原来按 `--to-ports` 扫全表删 REDIRECT，真机验证会把其它工
+具的同端口规则一并删掉。
+
+- proxy 规则改为写入自建链 `dns_proxy`，`PREROUTING` 只留一条跳转；
+- 清理只 `-D` 自己的跳转 + `-F/-X` 自建链，不再扫全表；
+- `assert_clear` 只断言自建链与指向它们的跳转。
+
+### 修复：`port_owner` 在 toybox 上定位不到属主（复审 R6）
+
+toybox 的 `ss` 不输出 `ino:`，按 inode 匹配 100% 落空，只能落到 9 秒的
+`/proc` 兜底且返回空。快路径改为按端口精确匹配（第 5 列本地地址），
+`60530` 不会被误当成 `6053`。真机能打印出 `smartdns (pid)`。
+
+### 清理（复审 R7）
+
+- `clean` 里重复的 `server_stop` 删除；
+- 删除无调用方的 `scripts/lib.sh`（唯一使用者 cronTask 已移除）；
+- `uninstall.sh` 增加停止看门狗：否则 `rm -rf $DATA_BASE` 删掉 `.stopped` 后，
+  孤儿看门狗会尝试 `start-auto`，模块目录被删后每 30s→5min 空转；
+- `service.sh` 看门狗日志不再用 `$!`。
+
 ## 4.2.2
 
 2026-11-14 代码评审（4 个 Critical + 22 个 Warning）的全部修复。已在本机
