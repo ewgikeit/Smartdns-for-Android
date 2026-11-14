@@ -215,8 +215,14 @@ conf_bind_set() {
 		for (k = length(addr); k > 0; k--) if (substr(addr, k, 1) == ":") { i = k; break }
 		if (i > 0) {
 			rest = substr(addr, i + 1)          # 6053 或 6053@wlan0
-			p = rest; sub(/@.*/, "", p)
+			p = rest; sub(/@.*/, "", p); sub(/\r$/, "", p)
 			if (p ~ /^[0-9]+$/) $2 = substr(addr, 1, i) np substr(rest, length(p) + 1)
+		} else {
+			# 复审 R4：`bind 6053` 是合法写法，没有地址部分，整个字段就是端口。
+			# 旧实现只找最后一个冒号，i=0 时整行跳过，却仍然 return 0，
+			# 调用方于是回报“已同步”，内核其实还听在旧端口。
+			p = addr; sub(/@.*/, "", p); sub(/\r$/, "", p)
+			if (p ~ /^[0-9]+$/) $2 = np substr(addr, length(p) + 1)
 		}
 	}
 	{ print }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
@@ -233,7 +239,7 @@ esc_sed() {
 
 set_one() {
 	# bind_note 用局部变量：do_set 会连续调用多次，全局变量会把上一条的提示带出来
-	local key="$1" val="$2" line bind_note=''
+	local key="$1" val="$2" line bind_note='' bp now
 	case "$key" in
 		Main_PORT|Second_PORT)
 			if [ -n "$val" ]; then
@@ -247,8 +253,20 @@ set_one() {
 			if [ "$key" = 'Main_PORT' ] && [ -n "$val" ] && [ -f "$CONF" ]; then
 				bp=$(conf_bind_port)
 				if [ -n "$bp" ] && [ "$bp" != "$val" ]; then
-					cp -f "$CONF" "$WEBUI_BAK" 2>/dev/null
-					conf_bind_set "$val" || err "改写 $CONF 的 bind 端口失败，端口未修改"
+					cp -f "$CONF" "$WEBUI_BAK" 2>/dev/null \
+						|| err "无法创建配置备份，端口未修改"
+					conf_bind_set "$val" || {
+						cat "$WEBUI_BAK" > "$CONF" 2>/dev/null
+						err "改写 $CONF 的 bind 端口失败，已回滚"
+					}
+					# 复审 R4：写完必须回读。bind 写法（无冒号、带 @device、
+					# CRLF）稍有不同就可能整行跳过，而函数仍返回 0 ——
+					# 那正是 C3 要消灭的「iptables 转了、内核没听、界面说已同步」。
+					now=$(conf_bind_port)
+					if [ "$now" != "$val" ]; then
+						cat "$WEBUI_BAK" > "$CONF" 2>/dev/null
+						err "bind 端口没有改成 $val（当前 ${now:-未识别}），已回滚"
+					fi
 					bind_note="bind $bp -> $val（重启服务后生效）"
 				elif [ -z "$bp" ]; then
 					bind_note="配置里没有 bind 行，内核会按默认 53 端口监听，请自行确认"
@@ -475,31 +493,18 @@ log_missing_hint() {
 	return 0
 }
 
-# 保存前的配置结构校验。
+# 保存前的配置结构校验。返回 0=通过、1=硬错误、2=可确认的警告。
 #
 # 这里不用 smartdns -t：真机实测这个 Android 构建没有 -t（只有 -f/-c/-p），
 # 而且它对未知配置项是宽容的——乱写一行、端口写 99999、conf-file 指向
 # 不存在的文件，进程都照样跑（rc 不会变），拿「能不能起来」判断不出问题。
-# 真正会把模块搞坏的是这两类，做确定性检查更可靠：
-#   1. conf-file 引用的文件不存在：规则静默缺失，而且下次 clean/重装时
-#      很容易踩到「内核拒绝启动」；
-#   2. bind 端口不是 1-65535：内核要么报错要么回退，用户完全看不出来。
+#
+# 复审 R2：conf-file 缺失在内核那边只是「那段规则静默缺失」，4.2.1 里能存能用，
+# 4.2.2 直接拒存会把只想改一行上游的老用户挡在门外（老 README 教过加
+# conf-file ./hosts/github.txt）。所以降级为「可确认的警告」；只有 bind 端口
+# 越界这种必定弄坏监听的问题才硬拒绝。含 glob 元字符的路径跳过存在性判断。
 conf_check_tmp() {
 	local src="$1" p missing='' bad=''
-	while IFS= read -r p; do
-		[ -n "$p" ] || continue
-		case "$p" in
-			/*) [ -f "$p" ] || missing="$missing $p" ;;
-			*)  [ -f "$DATA_INTERNAL_DIR/$p" ] || missing="$missing $p" ;;
-		esac
-	done <<EOF
-$(awk '{ sub(/#.*/, "") } $1 == "conf-file" { print $2 }' "$src" 2>/dev/null)
-EOF
-	if [ -n "$missing" ]; then
-		printf 'conf-file 引用的文件不存在：%s\n' "$missing"
-		return 1
-	fi
-
 	bad=$(awk '
 		{ sub(/#.*/, "") }
 		$1 ~ /^bind(-tcp|-tls)?$/ {
@@ -512,11 +517,28 @@ EOF
 		printf 'bind 端口不合法：%s\n' "$bad"
 		return 1
 	fi
+
+	while IFS= read -r p; do
+		[ -n "$p" ] || continue
+		case "$p" in
+			*[\*\?\[]*) continue ;;   # glob：存在性判断不成立，交给内核
+		esac
+		case "$p" in
+			/*) [ -f "$p" ] || missing="$missing $p" ;;
+			*)  [ -f "$DATA_INTERNAL_DIR/$p" ] || missing="$missing $p" ;;
+		esac
+	done <<EOF
+$(awk '{ sub(/#.*/, "") } $1 == "conf-file" { print $2 }' "$src" 2>/dev/null)
+EOF
+	if [ -n "$missing" ]; then
+		printf 'conf-file 引用的文件不存在：%s\n' "$missing"
+		return 2
+	fi
 	return 0
 }
 
 do_put() {
-	local name="$1" b64="$2" tmp
+	local name="$1" b64="$2" force="${3:-0}" tmp crc
 	[ "$name" = 'smartdns.conf' ] || err "不允许写入该文件: $name"
 	[ -n "$b64" ] || err '内容为空'
 
@@ -552,15 +574,20 @@ do_put() {
 		err "配置里 [::]:$dup 与 0.0.0.0:$dup 同时 bind，Android 下 IPv6 是双栈，内核会报 Address in use。二选一即可（推荐只保留 bind [::]:$dup）。"
 	fi
 
-	# 审查 W20：上面只拦了「没有 bind」和双栈冲突。conf-file 指向不存在的
-	# 文件、bind 端口越界这两类，内核不会报错退出（真机实测照样跑），
-	# 但会让规则静默缺失或监听异常，所以保存前做确定性检查。
+	# 审查 W20 / 复审 R2：分硬错误与可确认警告。
+	#   1 = bind 端口越界，必定弄坏监听，直接拒绝；
+	#   2 = conf-file 指向不存在的文件，内核只会让那段规则静默缺失，
+	#       老配置升级后不该被一刀切挡住 —— 前端弹确认，用户同意后带 force 重试。
 	local check_msg
-	check_msg=$(conf_check_tmp "$tmp") || {
+	check_msg=$(conf_check_tmp "$tmp"); crc=$?
+	if [ "$crc" -eq 1 ]; then
 		rm -f "$tmp"
-		err "配置检查未通过，已放弃写入：
-${check_msg:-（原因未知）}"
-	}
+		err "配置检查未通过，已放弃写入：$check_msg"
+	fi
+	if [ "$crc" -eq 2 ] && [ "$force" != '1' ]; then
+		rm -f "$tmp"
+		err "WARN:CONFIG:${check_msg}。仍要保存请确认。"
+	fi
 
 	# 校验通过后才覆盖备份，避免一次失败写入把上一版备份也弄丢
 	[ -f "$CONF" ] && cp -f "$CONF" "$WEBUI_BAK"

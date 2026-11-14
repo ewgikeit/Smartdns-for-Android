@@ -14,7 +14,7 @@ case "$0" in
 	*/*) MODDIR=$(cd "${0%/*}" 2>/dev/null && pwd) ;;
 	*) MODDIR=$(pwd) ;;
 esac
-# 加载参数（只依赖路径常量；不加载 lib.sh，避免它内部的 readonly 冲突）
+# 加载参数（只依赖路径常量；不加载模块里的其它脚本，避免 readonly 冲突）
 [ -f "$MODDIR/constant.sh" ] && . "$MODDIR/constant.sh"
 [ -n "$CORE_NAME" ] || CORE_NAME="smartdns"
 [ -n "$DATA_BASE" ] || DATA_BASE="/data/adb/$CORE_NAME"
@@ -30,6 +30,18 @@ if command -v pkill >/dev/null 2>&1; then
 	pkill -f "$DATA_BASE/binary/$CORE_NAME" 2>/dev/null
 fi
 
+# 1.1 停看门狗（复审 R7）。下面会 rm -rf $DATA_BASE，连同 .stopped 一起删；
+# 孤儿看门狗下一拍醒来发现「没有停止标记」，就会尝试 start-auto —— 而此时
+# 模块目录可能还在，内核会被重新拉起；目录被 Magisk 删掉后则每 30s→5min
+# 空转一次，直到重启。先按锁里的 pid 精确杀，再按 cmdline 兜底。
+if [ -f "$WATCH_LOCK/pid" ]; then
+	wpid=$(cat "$WATCH_LOCK/pid" 2>/dev/null)
+	[ -n "$wpid" ] && kill "$wpid" 2>/dev/null
+fi
+if command -v pkill >/dev/null 2>&1; then
+	pkill -f "$MODDIR/command.sh watch" 2>/dev/null
+fi
+
 # 2. 工作目录：先解 bind，否则 rm 删掉的只是挂载点里的空壳
 umount "$WORK_DIR/binary" 2>/dev/null
 umount "$WORK_DIR/config" 2>/dev/null
@@ -39,7 +51,7 @@ rm -rf "$WORK_DIR"
 # 3. 配置与日志数据（用户配置、规则目录、日志都在这里）
 rm -rf "$DATA_BASE"
 
-# 4. 脚本临时目录（lib.sh 里 SCRIPT_TEMP_DIR 的父目录）
+# 4. 脚本临时目录（scripts 临时目录的父目录）
 rm -rf "/data/local/tmp/$CORE_NAME"
 # 旧版本把 WebUI 临时配置摊在 /data/local/tmp/smartdns-webui.<pid>，
 # 升级到新布局后卸载时要把这批残留一起清掉（含解码出来的完整配置）

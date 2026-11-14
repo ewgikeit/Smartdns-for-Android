@@ -43,7 +43,21 @@ if command -v setsid >/dev/null 2>&1; then
 else
 	sh "$MODDIR/command.sh" watch >/dev/null 2>&1 &
 fi
-echo "[boot] watchdog started (pid $!)"
+# $! 是 setsid 的 pid，不是看门狗的；拿它写日志会在「陈旧锁误判」时
+# 谎报「已启动」（复审 R1）。改为回读看门狗自己写进锁文件的 pid，并核对
+# cmdline 确认那个进程确实是看门狗。
+wpid=''; wi=0
+while [ "$wi" -lt 3 ]; do
+	wpid=$(cat "$WATCH_LOCK/pid" 2>/dev/null)
+	[ -n "$wpid" ] && break
+	sleep 1
+	wi=$((wi + 1))
+done
+if [ -n "$wpid" ] && tr '\0' ' ' < "/proc/$wpid/cmdline" 2>/dev/null | grep -q 'command.sh watch'; then
+	echo "[boot] watchdog started (pid $wpid)"
+else
+	echo "[boot] watchdog 未启动（锁: ${wpid:-无}）—— 执行 sh command.sh watch 可看到原因"
+fi
 
 # 开机任务（hosts 更新等）需要联网，放后台跑，不影响已经启动的服务
 sh "$MODDIR/command.sh" boot >/dev/null 2>&1 &

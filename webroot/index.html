@@ -865,7 +865,7 @@ function asText(v) {
 }
 
 var MODDIR = '';
-var state = { tab: 'status', logName: 'server.log', logLines: 300, timer: null, logTimer: null };
+var state = { tab: 'status', logName: 'server.log', logLines: 300, timer: null, logTimer: null, confTruncated: false };
 
 function q(s) { return "'" + String(s == null ? '' : s).replace(/'/g, '') + "'"; }
 
@@ -890,10 +890,15 @@ function shell(action, args, allowEmpty) {
       var mCut = /^truncated=([01])\r?\n/.exec(u.body);
       if (mCut) {
         u.body = u.body.slice(mCut[0].length);
+        // R3：配置被截断时编辑器里只有末尾 64KB，一旦保存会把前半段
+        // （可能包含全部上游定义）静默丢掉，所以记下状态、禁止保存。
+        if (action === 'cat') state.confTruncated = (mCut[1] === '1');
         if (mCut[1] === '1' && !state.cutNotified) {
           state.cutNotified = true;
           toast('内容超过单次读取上限，只显示末尾部分', true);
         }
+      } else if (action === 'cat') {
+        state.confTruncated = false;
       }
     }
     return u.body;
@@ -1106,10 +1111,29 @@ function loadConf() {
 function saveConf(btn) {
   var text = document.getElementById('confEditor').value;
   if (!text.trim()) return toast('配置为空，已取消保存', true);
+  // R3：编辑器里是截断后的末尾 64KB，保存会把前半段静默覆盖掉
+  if (state.confTruncated) {
+    return toast('当前内容是截断后的预览，禁止保存；请缩小配置或改用 conf-file', true);
+  }
   var b64 = textToB64(text);
   if (b64.length > 400000) return toast('配置过大（约超过 300KB），请精简后再保存', true);
   setBusy(btn, true, '保存中…');
-  shell('put', [q('smartdns.conf'), q(b64)]).then(function () {
+  function putConf(force) {
+    var args = [q('smartdns.conf'), q(b64)];
+    if (force) args.push('force');
+    return shell('put', args);
+  }
+  putConf(false).catch(function (e) {
+    // R2：conf-file 缺失是可确认的警告，不是硬错误
+    var m = String(e.message || '');
+    if (m.indexOf('WARN:CONFIG:') === 0) {
+      return ask('配置有警告', m.slice('WARN:CONFIG:'.length), '仍然保存').then(function (yes) {
+        if (yes) return putConf(true);
+        throw new Error('已取消保存');
+      });
+    }
+    throw e;
+  }).then(function () {
     confDirty = false;
     toast('已保存，重启后生效');
     return ask('需要重启', '配置已写入，是否立即重启服务？', '立即重启');

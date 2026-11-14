@@ -119,7 +119,11 @@ readonly IPT_BAK="$TEMP_DIR/iptables_rules.bak"
 readonly IP6T_BAK="$TEMP_DIR/ip6tables_rules.bak"
 
 # 看门狗单实例锁。mkdir 是原子的：两个同时启动只有一个能建成。
-readonly WATCH_LOCK="$DATA_BASE/.watch.lock"
+# 必须放 tmpfs（$WORK_DIR）而不是 $DATA_BASE —— 锁里只有 pid，断电或
+# kill -9 留下的陈旧锁会跨开机存活；pid 是顺序分配的，很可能被别的进程
+# 复用，新看门狗就会误判「已有实例」而静默退出（复审 R1，真机可用 pid=1
+# 稳定复现）。/dev 重启即空，从根上消除跨开机残留。
+readonly WATCH_LOCK="$WORK_DIR/.watch.lock"
 
 # 只有「干净」的快照才落盘：里面出现模块自建链或 --to-ports，说明抓快照时
 # 服务正在跑；这种备份在 clean 时会把「重定向到死端口」原样恢复回去，比不还原
