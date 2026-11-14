@@ -1873,6 +1873,10 @@ document.getElementById('btnReloadParams').onclick = function () {
 var editor = document.getElementById('confEditor');
 editor.addEventListener('input', function () {
   confDirty = true;
+  // 复审 4.2.3 §三.1：用户已经动过内容，风险从「静默丢前半段」变成「用户主动」。
+  // 不复位的话，把 70KB 删到 30KB（正是“缩小配置”的正确做法）也存不进去，
+  // 而重新载入又会因为磁盘上仍是 70KB 再次置位 —— 用户被永久锁死。
+  state.confTruncated = false;
   document.getElementById('confHint').textContent = '有未保存的修改';
 });
 document.getElementById('btnSaveConf').onclick = function () { saveConf(this); };

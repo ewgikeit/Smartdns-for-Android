@@ -665,11 +665,50 @@ iptrules_verify() {
 	[ -z "$bad" ]
 }
 
+### 旧格式规则（复审 4.2.3 §三.3）
+# 4.2.2 及更早的 proxy 规则直接写在 PREROUTING 上；4.2.3 改成 dns_proxy 自建链
+# 后，清理不再按端口反查（避免误删第三方同端口规则）。升级用户可能留着旧规则，
+# 这里只「检测 + 提示」，清理交给显式触发（`clean-legacy`，或 `clean` 时顺带）。
+legacy_rules_present() {
+	local p
+	for p in "$Main_PORT" "$Second_PORT"; do
+		[ -n "$p" ] || continue
+		iptables -w 5 -t nat -S PREROUTING 2>/dev/null \
+			| grep -qE -- "-j REDIRECT --to-ports ${p}$" && return 0
+	done
+	return 1
+}
+
+do_clean_legacy() {
+	local p spec
+	for p in "$Main_PORT" "$Second_PORT"; do
+		[ -n "$p" ] || continue
+		iptables -w 5 -t nat -S PREROUTING 2>/dev/null | sed -n 's/^-A /-D /p' | \
+		while IFS= read -r spec; do
+			case "$spec" in
+				*"--to-ports ${p}") iptables -w 5 -t nat $spec 2>/dev/null || true ;;
+			esac
+		done
+	done
+	if legacy_rules_present; then
+		echo 'ok=0'
+		return 1
+	fi
+	echo 'ok=1'
+	return 0
+}
+
 iptrules_on() {
 	if [[ "$MODE" != *'local'* && "$MODE" != *'proxy'* ]]; then
 		return 0
 	fi
 	local IPP
+	# 复审 4.2.3 §三.3：旧格式残留会让状态页与看门狗误判，启动时提示一次。
+	# 不自动删 —— 它和「第三方同端口规则」长得一样，静默删会重演 R5 的问题。
+	if legacy_rules_present; then
+		grep -q '旧版本留下的 PREROUTING' "$BOOT_LOG" 2>/dev/null \
+			|| boot_note '[start] 检测到旧版本留下的 PREROUTING REDIRECT 规则，建议执行: smartdns clean-legacy'
+	fi
 	#  IPv4
 	# 建链 dns_redirect
 	iptables -w 5 -t nat -N dns_redirect
@@ -1233,18 +1272,19 @@ server_check() {
 
 # 检查防火墙状态
 iptrules_check() {
-	# Second_PORT 在 start 之前是空串，直接拼进正则会变成 `(6053|)` —— 空分支让
-	# 任何一条 REDIRECT 都命中（真机 script_conf 里 Second_PORT 确实是空的）。
-	# 顺带把判据锚到 `--to-ports`，否则 `--to-ports 16053` 也会被当成命中。
-	local ports="$Main_PORT"
-	if [ -n "$Second_PORT" ] && [ "$Second_PORT" != "$Main_PORT" ]; then
-		ports="$ports|$Second_PORT"
-	fi
-	if iptables -w 5 -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ($ports)$"; then
+	# 复审 4.2.3 §三.3：判据改为「OUTPUT 里是否还有指向自建链的跳转」。
+	# 原来按 `--to-ports $port` 扫全表：4.2.2 之前留下的直接 PREROUTING
+	# REDIRECT 会让它恒为真 → 看门狗认为规则已装，不再补 OUTPUT 跳转 →
+	# 本机重定向静默失效，而状态页显示「已生效」。
+	if iptables -w 5 -t nat -S OUTPUT 2>/dev/null | grep -qE -- '-j dns_redirect$'; then
 		return 0
 	fi
-	if [ "$IP6T_BLOCK" != 'yes' ]; then
-		if ip6tables -w 5 -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ($ports)$"; then
+	if [ "$IP6T_BLOCK" = 'yes' ]; then
+		if ip6tables -w 5 -t filter -S OUTPUT 2>/dev/null | grep -qE -- '-j dns_block$'; then
+			return 0
+		fi
+	else
+		if ip6tables -w 5 -t nat -S OUTPUT 2>/dev/null | grep -qE -- '-j dns_redirect$'; then
 			return 0
 		fi
 	fi
@@ -1634,12 +1674,19 @@ get_args() {
 			exit 1
 			;;
 
+		clean-legacy) # 清掉 4.2.2 之前直接写在 PREROUTING 上的 REDIRECT
+			do_clean_legacy
+			;;
+
 		clean) # 清除
 			touch "$STOP_FLAG" 2>/dev/null
 			# 审查 C1：先按「实际装过的」清一遍自建链与外链。只靠下面的
 			# iptables-restore 是不行的：备份在 tmpfs，缺失时 restore 静默失败，
 			# 而且 PREROUTING 的代理跳转从来不在备份的还原范围里。
 			iptrules_off
+			# 复审 4.2.3 §三.3：clean 是用户主动重置，顺带清掉旧格式规则。
+			# 旧规则会让 ipt_snapshot 把备份判脏 → 没有干净备份可 restore。
+			do_clean_legacy >/dev/null 2>&1
 			# 还原 iptables：只认「干净」的备份（失效/空/含模块链都跳过）。
 			# 备份在 tmpfs，重启后本就可能不存在；更麻烦的是 ensure_env/initTask
 			# 若在服务运行期间抓过快照，备份里就带着 dns_redirect + --to-ports，
