@@ -4,6 +4,24 @@
 
 代码评审（2026-11-14）修复中，下列条目已落地但尚未发版。
 
+### 修复：端口与 bind 不一致（评审 C3）
+
+- WebUI 保存 `Main_PORT` 时，顺手把 `smartdns.conf` 里的 `bind` / `bind-tcp` /
+  `bind-tls` 端口一起改掉。原来只写 `script_conf.sh`：iptables 把 53 全量重定向到
+  新端口，内核却还在旧端口监听 —— 解析全挂；看门狗又会因为「进程在、端口没听」
+  每 90 秒杀一次内核再拉起，界面一直显示"运行中"，日志里只有一串 start 成功。
+- 只改端口那一截：`[::]` / `0.0.0.0` 地址、`@wlan0` 设备名、其它参数、注释行都不动；
+  改完返回 `port_note=`，前端提示「重启服务后生效」。
+- 配置里没有 `bind` 行时不乱写，只提示「内核会按默认 53 端口监听，请自行确认」。
+
+### 修复：规则下载不再关闭 TLS 校验（评审 C4）
+
+- `scripts/lib.sh` 的 `download_links` 原来是 `curl -k` / `wget --no-check-certificate`，
+  TLS 只加密不验身份；下载到的 hosts 会被转成 `address /域名/IP` 写进内核配置
+  （root 权限、无人工确认），中间人可决定任意域名解析到哪。改成
+  `curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-filesize 64M` 与
+  `wget --https-only`（busybox wget 默认校验证书）。
+
 ### 修复：规则存在性判定（评审外，自行发现）
 
 - `iptrules_check` / `webui.sh` 的 `ipt_active` 把 `($Main_PORT|$Second_PORT)` 直接

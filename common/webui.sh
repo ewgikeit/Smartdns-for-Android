@@ -180,13 +180,47 @@ do_conf() {
 	return 0
 }
 
+# ---- 端口与 smartdns.conf 的 bind 一致性（审查 C3）----------------------
+# iptables 把 53 重定向到 Main_PORT，而内核按 smartdns.conf 里的 bind 端口监听。
+# 两份配置各自独立：只改一边，等于把全量 DNS 转到没人监听的端口 —— 解析全挂，
+# 看门狗还会因为"进程在、端口没听"每 90 秒杀一次内核重起，界面却一直显示运行中。
+# 所以「保存端口」必须是一个事务：bind / bind-tcp / bind-tls 一起改。
+conf_bind_port() {
+	awk '!/^[[:space:]]*#/ && $1 ~ /^bind(-tcp|-tls)?$/ {
+		p = $2
+		sub(/@.*$/, "", p)      # 去掉 @wlan0 这类绑定设备
+		sub(/^.*:/, "", p)      # 去掉 [::] / 0.0.0.0 / IP 部分
+		if (p ~ /^[0-9]+$/) { print p; exit }
+	}' "$CONF" 2>/dev/null
+}
+
+conf_bind_set() {
+	local np="$1" tmp="$TEMP_DIR/.bind.$$"
+	awk -v np="$np" '
+	!/^[[:space:]]*#/ && $1 ~ /^bind(-tcp|-tls)?$/ && NF >= 2 {
+		addr = $2; i = 0
+		for (k = length(addr); k > 0; k--) if (substr(addr, k, 1) == ":") { i = k; break }
+		if (i > 0) {
+			rest = substr(addr, i + 1)          # 6053 或 6053@wlan0
+			p = rest; sub(/@.*/, "", p)
+			if (p ~ /^[0-9]+$/) $2 = substr(addr, 1, i) np substr(rest, length(p) + 1)
+		}
+	}
+	{ print }' "$CONF" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	[ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+	cat "$tmp" > "$CONF" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	rm -f "$tmp"
+	return 0
+}
+
 # sed 替换用的转义
 esc_sed() {
 	printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
 
 set_one() {
-	local key="$1" val="$2" line
+	# bind_note 用局部变量：do_set 会连续调用多次，全局变量会把上一条的提示带出来
+	local key="$1" val="$2" line bind_note=''
 	case "$key" in
 		Main_PORT|Second_PORT)
 			if [ -n "$val" ]; then
@@ -195,6 +229,17 @@ set_one() {
 				esac
 				[ "$val" -ge 1 ] 2>/dev/null && [ "$val" -le 65535 ] 2>/dev/null \
 					|| err "端口超出范围 (1-65535): $key=$val"
+			fi
+			# 审查 C3：主端口决定 iptables 的重定向目标，必须和 bind 一起改
+			if [ "$key" = 'Main_PORT' ] && [ -n "$val" ] && [ -f "$CONF" ]; then
+				bp=$(conf_bind_port)
+				if [ -n "$bp" ] && [ "$bp" != "$val" ]; then
+					cp -f "$CONF" "$WEBUI_BAK" 2>/dev/null
+					conf_bind_set "$val" || err "改写 $CONF 的 bind 端口失败，端口未修改"
+					bind_note="bind $bp -> $val（重启服务后生效）"
+				elif [ -z "$bp" ]; then
+					bind_note="配置里没有 bind 行，内核会按默认 53 端口监听，请自行确认"
+				fi
 			fi
 			;;
 		MODE)
@@ -231,6 +276,8 @@ set_one() {
 	else
 		printf "%s='%s'\n" "$key" "$(printf '%s' "$val" | sed -e "s/'//g")" >> "$SCRIPT_CONF"
 	fi
+	# 审查 C3：把 bind 的同步结果告诉前端，别让用户以为只改了一半
+	[ -n "${bind_note:-}" ] && echo "port_note=$bind_note"
 }
 
 do_set() {
