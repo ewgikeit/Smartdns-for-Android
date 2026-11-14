@@ -78,9 +78,11 @@ mount_workdir() {
 initTask() {
 	# 创建工作环境
 	mount_workdir
-	# 保存防火墙初始设置
-	iptables-save > $IPT_BAK 2>/dev/null
-	ip6tables-save > $IP6T_BAK 2>/dev/null
+	# 保存防火墙初始设置。只落干净快照：initTask 可能被重复执行（模块更新、
+	# 手动调用），那时模块规则已经在表里，直接 save 会把"重定向到死端口"
+	# 存成"初始状态"，之后 clean 会把它原样恢复。
+	ipt_snapshot "$IPT_BAK" iptables-save
+	ipt_snapshot "$IP6T_BAK" ip6tables-save
 	chmod 0640 $TEMP_DIR/*.bak 2>/dev/null
 	return 0
 }
@@ -115,6 +117,30 @@ bootTask() {
 #防火墙备份
 readonly IPT_BAK="$TEMP_DIR/iptables_rules.bak"
 readonly IP6T_BAK="$TEMP_DIR/ip6tables_rules.bak"
+
+# 看门狗单实例锁。mkdir 是原子的：两个同时启动只有一个能建成。
+readonly WATCH_LOCK="$DATA_BASE/.watch.lock"
+
+# 只有「干净」的快照才落盘：里面出现模块自建链或 --to-ports，说明抓快照时
+# 服务正在跑；这种备份在 clean 时会把「重定向到死端口」原样恢复回去，比不还原
+# 更糟。遇到脏快照就丢掉临时文件、保留旧备份（旧备份也可能本来就不存在 ——
+# 那就宁可不备份，clean 只清自建链）。
+ipt_snapshot() {
+	local f="$1" cmd="$2" tmp="$1.tmp"
+	$cmd > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+	if [ -s "$tmp" ] && ! grep -qE 'dns_(redirect|block|proxy)|--to-ports' "$tmp" 2>/dev/null; then
+		mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"
+	else
+		rm -f "$tmp"
+	fi
+	return 0
+}
+
+# 备份能不能用来还原：缺失 / 空 / 含模块规则 都不行
+ipt_bak_usable() {
+	[ -s "$IPT_BAK" ] && [ -s "$IP6T_BAK" ] || return 1
+	! grep -qE 'dns_(redirect|block|proxy)|--to-ports' "$IPT_BAK" "$IP6T_BAK" 2>/dev/null
+}
 
 #程序PID
 readonly PID_FILE="$TEMP_DIR/server.pid"

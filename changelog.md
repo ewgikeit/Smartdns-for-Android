@@ -133,6 +133,23 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
   手动 `start` 语义、`set -e` 断言、`watch_rules` 立即返回、`.running` 生命周期、
   已有任务/未到期/无源文件时不重复启动。
 
+### 修复：clean 还原脏备份 / 看门狗单实例竞态（评审 W3 / W13）
+
+- **W3** 备份（`/dev/smartdns/tmp/iptables_rules.bak`）是 `iptables-save` 的直出：
+  `initTask` 每次开机/模块更新都会重抓，`ensure_env` 在工作目录丢失时也会重抓。
+  如果抓的时候服务正在跑，快照里就带着 `dns_redirect` 和 `--to-ports 6053`；
+  之后 `clean` 拿它 `iptables-restore`，等于把「重定向到死端口」原样恢复回去，
+  比不还原更糟。现在 `ipt_snapshot` 只落「干净」快照（含模块链或 `--to-ports`
+  就丢掉，旧备份保持不动），`clean` 只在双栈备份都干净时才 restore，否则记
+  `boot.log` 并只清自建链——自建链本来就已经被 `iptrules_off` 清掉了。
+- **W13** 看门狗单实例原来只扫 `/proc` 的 cmdline：两个进程同时启动、都还没扫到
+  对方时都会通过，之后每 30 秒互杀一次内核；`/proc` 读不到时也会当成「没有别的
+  实例」。现在先 `mkdir` 抢目录锁（原子），抢不到等对方写 pid 再判断；pid 已死的
+  残留锁自动接管；`/proc` 扫描降为兜底（处理 pid 复用）。退出时释放锁，`TERM`/`INT`
+  改成先退出再由 `EXIT` trap 清锁，避免「锁没了但看门狗还在跑」。
+- 本地配套测试 `webui-tests/backup-lock-test.sh`（18 项）：干净/脏快照、save 失败、
+  备份可用性判定、锁的抢占/接管/空 pid/并发启动只活一个。
+
 ## 4.2.1
 
 只删代码，不改功能。**从这一版起不再兼容 4.0.0 之前的模块**，那批遗留迁移逻辑
