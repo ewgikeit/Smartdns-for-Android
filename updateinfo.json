@@ -1,6 +1,6 @@
 {
-	"version": "4.2.0 (1.2026.08.05-0921)",
-	"versionCode": 23,
+	"version": "4.2.1 (1.2026.08.05-0921)",
+	"versionCode": 24,
 	"zipUrl": "https://github.com/ewgikeit/Smartdns-for-Android/releases/latest/download/smartdns-android.zip",
 	"changelog": "https://github.com/ewgikeit/Smartdns-for-Android/raw/master/changelog.md"
 }

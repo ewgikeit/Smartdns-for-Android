@@ -1,5 +1,32 @@
 # 更新日志
 
+## 4.2.1
+
+只删代码，不改功能。**从这一版起不再兼容 4.0.0 之前的模块**，那批遗留迁移逻辑
+全部删掉（约 130 行），4.0 及以后的升级路径完全不变。
+
+### 删除
+
+- `customize.sh`：`migrate_legacy_layout`（2024 年的 `list_block` / `list_ip` /
+  `list_location` → `block` / `ip` / `domain_diverg` 目录搬家 + 改写配置里的
+  相对路径）、`sync_scripts` 里把旧 `bootTask/*.sh` 与 `cronTask/root` 改名成
+  `.legacy` 的两段、以及「包里没带 `rulesrc/` 时从 `config/` 兜底取 seed」的分支
+- `common/rules.sh`：`rules_import_legacy`（把 3.x 的静态表复制进 `seed/`）、
+  `rules_cleanup_legacy`（删 `config/` 下那四张约 5 MB 的重复表）、
+  `rules_cache_gc`（清 3.5 及以前本地源复制到 `cache/*.raw` 的残留）
+- `common/command.sh`：`conf_rules_fix` 里把旧 `conf-file` 引用改写成
+  `./rules/index.conf` 的那段 awk 迁移。这个函数现在只负责「规则元数据、合并
+  文件、索引确实存在」，不再动用户的配置
+
+### 影响
+
+- 从 4.0 之前升上来**不会**再自动迁移：目录不搬、配置不改、旧表不删。结果是旧
+  静态表照旧生效、规则源里更新走不到内核（不报错，但会以为更新没生效）。
+  升上来之前先 reset 一次，或按 README「从 4.0 之前升级」手改 `conf-file`
+- 那四张约 5 MB 的旧表不再被自动清理，留在 `config/` 里；确认主配置不再引用后
+  可以自己删
+- 4.0 / 4.1 / 4.2.0 升到 4.2.1 无感：配置、规则源、本地 hosts 全部保留
+
 ## 4.2.0
 
 4.1 之前每个源各生成一份 `auto-<id>.conf`，`index.conf` 把六七个文件全部丢给
