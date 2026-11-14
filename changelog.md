@@ -97,6 +97,25 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
   （真机：`stop` 返回 3、内核还在跑、规则已删空）。循环去掉后问题消失，另外清理里
   每条命令都吞掉退出码（真机上 `iptables -F` 因链已不存在返回 1 也会打断 stop）。
 
+### 修复：端口体检的两次误判（评审 W1 / W12）
+
+- **W1** `port_busy` 只看 `/proc/net/tcp{,6}` 的本地端口，不看状态列：上一轮连接
+  留在 `TIME_WAIT`（`06`）时也算「被占用」。后果是 `wait_port_free` 每次白等满
+  15 轮、`free_port_for_start` 去 kill 一个并不存在的占用者，最后报「端口仍被占用」
+  并 `exit 1`；`diag` 也会显示「被占用 -> （空）」。现在 TCP 只把 `06` 当作可复用
+  状态跳过（依赖 `SO_REUSEADDR`，smartdns 默认开启），`LISTEN` / `ESTABLISHED` /
+  `CLOSE_WAIT` 等仍算占用；UDP 没有 `TIME_WAIT`，逻辑不变。
+- **W12** `port_owner` 原来对每个 `/proc/<pid>/fd/*` 单独 `readlink`，真机上进程数
+  × fd 数就是上万次 fork，实测 >90 秒不返回，而 `diag`、启动体检、`start_fail_hint`
+  都在同步调用它。现在两条路径：先 `ss -a -n -p` 一次列全表，从 `ino:` 找到
+  `pid=`（toybox 没编 `-p` 时自动跳过）；退回 `/proc` 时改成「一次 `ls -l` 取回
+  所有 fd 链接 + 一次 awk 匹配 inode」，fork 次数从「fd 总数」降到 2 次，并套
+  `timeout 8` 兜底。
+- 本地配套测试 `webui-tests/port-owner-test.sh`（14 项）：`TIME_WAIT`/`LISTEN`/
+  `CLOSE_WAIT`/UDP 的判定、`ss` 快路径、无 `pid=` 时回退、inode 不匹配、
+  6300+ 行 fd 输出的耗时。这几个函数新增可覆盖的 `PROC_ROOT`（默认 `/proc`），
+  测试全部跑在临时目录里。
+
 ## 4.2.1
 
 只删代码，不改功能。**从这一版起不再兼容 4.0.0 之前的模块**，那批遗留迁移逻辑

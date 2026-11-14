@@ -275,52 +275,119 @@ port_hex() {
 # 本机能不能读端口表。读不到时端口类判断一律当作"未知"，
 # 不能把"看不到"当成"没在监听"——那会让看门狗误杀正常进程。
 proc_net_ok() {
-	[ -r /proc/net/udp ] || [ -r /proc/net/udp6 ] || [ -r /proc/net/tcp ]
+	local P="${PROC_ROOT:-/proc}"
+	[ -r "$P/net/udp" ] || [ -r "$P/net/udp6" ] || [ -r "$P/net/tcp" ]
 }
 
 # 端口上是否已经有 socket（返回 0 = 被占）
+#
+# TCP 的 TIME_WAIT（状态列 06）不算占用：smartdns 每次 stop 都主动断开，
+# 重启时上一轮的连接几乎必然还停在 TIME_WAIT，而 bind 在 SO_REUSEADDR 下
+# 可以直接复用。把它算成占用会让 wait_port_free 白等 15 轮，再进
+# free_port_for_start 去 kill 一个根本不存在的占用者，最后报「端口仍被占用」。
+# 其余状态（LISTEN/ESTABLISHED/CLOSE_WAIT…）都真实持有本地端口，仍然算占用。
+# UDP 没有 TIME_WAIT，只要有同端口条目就算占用。
 port_busy() {
-	local hp f
+	local hp f tw P
+	P="${PROC_ROOT:-/proc}"
 	hp=$(port_hex "$1") || return 1
 	[ -n "$hp" ] || return 1
-	for f in /proc/net/udp /proc/net/udp6 /proc/net/tcp /proc/net/tcp6; do
+	for f in "$P/net/udp" "$P/net/udp6" "$P/net/tcp" "$P/net/tcp6"; do
 		[ -r "$f" ] || continue
-		awk -v p=":$hp" '
-			NR > 1 && substr($2, length($2) - length(p) + 1) == p { hit = 1; exit }
+		tw=0
+		case "$f" in */tcp*) tw=1 ;; esac
+		awk -v p=":$hp" -v tw="$tw" '
+			NR > 1 && substr($2, length($2) - length(p) + 1) == p {
+				if (tw && $4 == "06") next
+				hit = 1; exit
+			}
 			END { exit !hit }
 		' "$f" && return 0
 	done
 	return 1
 }
 
+# 从 ss 的输出里找 socket inode 的属主（快路径）。
+# ss 一次就能列出全机 socket 并直接给 pid，比遍历 /proc 快两个数量级。
+# toybox 的 ss 不一定编译了 -p / ino，拿不到 pid= 就老实返回失败，
+# 交给下面的 /proc 兜底——绝不因为快路径失败就报「无人占用」。
+port_owner_ss() {
+	local i dump out pid P
+	P="${PROC_ROOT:-/proc}"
+	command -v ss >/dev/null 2>&1 || return 1
+	dump=$(ss -a -n -p 2>/dev/null) || return 1
+	[ -n "$dump" ] || return 1
+	for i in "$@"; do
+		out=$(printf '%s\n' "$dump" | grep -F "ino:$i" | head -n 1)
+		[ -n "$out" ] || continue
+		pid=$(printf '%s\n' "$out" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+		[ -n "$pid" ] || continue
+		printf '%s %s %s\n' "$pid" \
+			"$(cat "$P/$pid/comm" 2>/dev/null)" \
+			"$(readlink "$P/$pid/exe" 2>/dev/null)"
+		return 0
+	done
+	return 1
+}
+
+# /proc 兜底路径：一次 ls 取回全机 fd 的符号链接，再用一次 awk 匹配 inode。
+# 原实现对每个 fd 单独 readlink（几千进程 × 几十 fd = 上万个 fork），
+# 真机实测 >90s，而调用方（启动体检、diag、看门狗）没有任何超时保护。
+# 这里把 fork 次数降到 2 次；ls 再套一层 timeout，防止个别 fd 目录卡住。
+port_owner_proc() {
+	local inodes="$1" lscmd P
+	P="${PROC_ROOT:-/proc}"
+	lscmd="ls -l $P/[0-9]*/fd"
+	if command -v timeout >/dev/null 2>&1; then
+		lscmd="timeout 8 $lscmd"
+	fi
+	# 不加引号：要让 $lscmd 拆成命令+参数，并让 [0-9]* 正常展开
+	# shellcheck disable=SC2086
+	$lscmd 2>/dev/null | awk -v want="$inodes" -v root="$P" '
+		BEGIN {
+			n = split(want, a, " ")
+			for (i = 1; i <= n; i++) if (a[i] != "") W[a[i]] = 1
+		}
+		# ls 多目录时的分组头：<PROC_ROOT>/<pid>/fd:
+		substr($0, 1, length(root) + 1) == root "/" && substr($0, length($0) - 3) == "/fd:" {
+			pid = substr($0, length(root) + 2, length($0) - length(root) - 5)
+			next
+		}
+		{
+			k = index($0, "socket:[")
+			if (k == 0 || pid == "") next
+			ino = substr($0, k + 8)
+			gsub(/[^0-9].*/, "", ino)
+			if (ino == "" || !(ino in W)) next
+			print pid, ino
+			exit
+		}'
+}
+
 # 找出谁占着端口，打印 "pid comm exe"（只取第一个）
 port_owner() {
-	local hp f inodes='' pid fd link idx i
+	local hp f inodes='' hit pid P
+	P="${PROC_ROOT:-/proc}"
 	hp=$(port_hex "$1") || return 1
-	for f in /proc/net/udp /proc/net/udp6 /proc/net/tcp /proc/net/tcp6; do
+	for f in "$P/net/udp" "$P/net/udp6" "$P/net/tcp" "$P/net/tcp6"; do
 		[ -r "$f" ] || continue
 		inodes="$inodes $(awk -v p=":$hp" '
 			NR > 1 && substr($2, length($2) - length(p) + 1) == p { print $10 }
 		' "$f" 2>/dev/null)"
 	done
-	[ -n "$(printf '%s' "$inodes" | tr -d ' \n')" ] || return 1
-	for pid in /proc/[0-9]*; do
-		[ -d "$pid" ] || continue
-		for fd in "$pid"/fd/*; do
-			link=$(readlink "$fd" 2>/dev/null) || continue
-			case "$link" in socket:*) ;; *) continue ;; esac
-			idx=$(printf '%s' "$link" | tr -dc '0-9')
-			[ -n "$idx" ] || continue
-			for i in $inodes; do
-				[ "$i" = "$idx" ] || continue
-				printf '%s %s %s\n' "${pid#/proc/}" \
-					"$(cat "$pid/comm" 2>/dev/null)" \
-					"$(readlink "$pid/exe" 2>/dev/null)"
-				return 0
-			done
-		done
-	done
-	return 1
+	inodes=$(printf '%s' "$inodes" | tr -s ' ' | sed 's/^ //; s/ $//')
+	[ -n "$inodes" ] || return 1
+
+	# $inodes 已清洗成空格分隔的数字，需要分词传给快路径
+	# shellcheck disable=SC2086
+	port_owner_ss $inodes && return 0
+
+	hit=$(port_owner_proc "$inodes" 2>/dev/null) || return 1
+	pid=${hit%% *}
+	[ -n "$pid" ] || return 1
+	printf '%s %s %s\n' "$pid" \
+		"$(cat "$P/$pid/comm" 2>/dev/null)" \
+		"$(readlink "$P/$pid/exe" 2>/dev/null)"
 }
 
 # 等进程真的消失（kill -0 还成功就说明没退）
@@ -365,9 +432,9 @@ free_port_for_start() {
 		[ -n "$port" ] || continue
 		wait_port_free "$port" 15 && continue
 
-		# 先按进程名清一遍自己的核。port_owner 要遍历全机的 /proc/*/fd 才能
-		# 定位 socket 属主，在真机上要跑好几分钟——最常见的情形（旧核没退干净）
-		# 根本不需要那么贵的手段。
+		# 先按进程名清一遍自己的核。定位 socket 属主虽然已经改成 ss/批量 ls，
+		# 但仍然比直接按名字杀贵得多；最常见的情形（旧核没退干净）用 core_pids
+		# 就够了，没必要为了一个 pid 去扫全机的 fd。
 		pids=$(core_pids)
 		if [ -n "$pids" ]; then
 			for pid in $pids; do kill -9 "$pid" 2>/dev/null; done
