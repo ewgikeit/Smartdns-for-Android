@@ -884,6 +884,18 @@ function shell(action, args, allowEmpty) {
     if (!allowEmpty && !u.body.trim()) {
       throw new Error('后端没有返回任何内容（rc=' + u.rc + '）');
     }
+    // cat / tail 的回包在超过服务端上限时，首行会带 truncated=1（只保留了末尾）。
+    // 不剥掉这行的话，asText() 会把它当成文件内容的一部分显示出来。
+    if (action === 'cat' || action === 'tail') {
+      var mCut = /^truncated=([01])\r?\n/.exec(u.body);
+      if (mCut) {
+        u.body = u.body.slice(mCut[0].length);
+        if (mCut[1] === '1' && !state.cutNotified) {
+          state.cutNotified = true;
+          toast('内容超过单次读取上限，只显示末尾部分', true);
+        }
+      }
+    }
     return u.body;
   });
 }
@@ -1125,7 +1137,10 @@ function runCheck() {
   }
   return shell('check', args).then(function (out) {
     var kv = parseKV(out);
-    return { rc: kv.rc, log: asText(kv.b64 || ''), note: note, raw: String(out) };
+    var log = asText(kv.b64 || '');
+    // 内核 8 秒的 info 日志可能超过服务端上限，只保留了末尾
+    if (kv.truncated === '1') log += '\n\n[已截断] 内核输出超过单次上限，只显示末尾部分。';
+    return { rc: kv.rc, log: log, note: note, raw: String(out) };
   });
 }
 

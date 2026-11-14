@@ -363,11 +363,29 @@ resolve_path() {
 	esac
 }
 
+# 单次回包上限。桥接层对 exec 输出有长度限制，超了会被截成半行（base64
+# 断在中间直接解码失败），前端只能报「执行通道异常」。日志/配置都是看末尾
+# 更有用，所以超限时只保留末尾这么多字节，并在首行标 truncated=1。
+# 取 64KB：base64 后约 85KB，留在常见的 128KB 桥接上限以内。
+WEBUI_MAX_BYTES="${WEBUI_MAX_BYTES:-65536}"
+
+file_size() {
+	wc -c < "$1" 2>/dev/null | tr -d ' '
+}
+
 do_cat() {
-	local f
+	local f size
 	f=$(resolve_path "$1") || err "不允许读取该文件: $1"
 	[ -f "$f" ] || err "文件不存在: $1"
-	b64_enc_file "$f"
+	init_b64
+	size=$(file_size "$f")
+	if [ "${size:-0}" -gt "$WEBUI_MAX_BYTES" ]; then
+		echo 'truncated=1'
+		tail -c "$WEBUI_MAX_BYTES" "$f" 2>/dev/null | $B64
+	else
+		echo 'truncated=0'
+		$B64 < "$f" 2>/dev/null
+	fi
 	return 0
 }
 
@@ -388,7 +406,18 @@ do_tail() {
 		return 0
 	fi
 	init_b64
-	tail -n "$n" "$f" 2>/dev/null | $B64
+	# 行数之外再限字节：info 级日志单行可以很长，5000 行照样能超桥接上限
+	local size cut=0
+	size=$(tail -n "$n" "$f" 2>/dev/null | wc -c | tr -d ' ')
+	if [ "${size:-0}" -gt "$WEBUI_MAX_BYTES" ]; then
+		cut=1
+	fi
+	echo "truncated=$cut"
+	if [ "$cut" = '1' ]; then
+		tail -n "$n" "$f" 2>/dev/null | tail -c "$WEBUI_MAX_BYTES" | $B64
+	else
+		tail -n "$n" "$f" 2>/dev/null | $B64
+	fi
 	return 0
 }
 
@@ -587,6 +616,15 @@ do_check() {
 	rm -f "$CHECK_CONF" "$tmp"
 
 	init_b64
+	# 8 秒 info 级内核日志动辄几百 KB；超限只留末尾，
+	# 否则 base64 会变成超长单行，被桥接层截断后前端只能报「执行通道异常」
+	local size cut=0
+	size=$(printf '%s' "$out" | wc -c | tr -d ' ')
+	if [ "${size:-0}" -gt "$WEBUI_MAX_BYTES" ]; then
+		cut=1
+		out=$(printf '%s' "$out" | tail -c "$WEBUI_MAX_BYTES")
+	fi
+	echo "truncated=$cut"
 	echo "rc=$rc"
 	printf 'b64='
 	# 必须压成一行：前端按 key=value 逐行解析，base64 默认每 76 字符折行，
