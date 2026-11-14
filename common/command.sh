@@ -1232,18 +1232,35 @@ trim_boot_log() {
 
 # 规则源到期检查。挂在看门狗里，不额外起守护进程。
 # 更新失败只记日志，绝不影响服务本身。
+#
+# 必须转后台：一次 `rulesrc update all` 是 curl --max-time 180 × 3 次重试 × N 个源，
+# 最坏能拖半小时。原来同步执行，这段时间看门狗整段不判活——DNS 挂了也不会自愈，
+# 而这恰好发生在"规则该更新了"这种最需要它盯着的时候。
 watch_rules() {
-	local due out rc
+	local due log="$BOOT_LOG" runner
 	[ -f "$RULES_SOURCES" ] || return 0
+	# 已有更新在跑（WebUI 手动触发、或上一轮看门狗触发）就不再叠加
+	rules_job_alive && return 0
 	due=$(rules_due 2>/dev/null)
 	[ -n "$due" ] || return 0
-	out=$(sh "$MODDIR/command.sh" rulesrc update all 2>&1)
-	rc=$?
-	{
-		echo "[watchdog] $(date +%c) 规则源到期，已更新 (rc=$rc): $(printf '%s' "$due" | tr '\n' ' ')"
-		printf '%s\n' "$out" | tail -n 12
-	} >> "$BOOT_LOG" 2>&1
-	trim_boot_log
+	: > "$RULES_STATE/.running" 2>/dev/null
+	echo "[watchdog] $(date +%c) 规则源到期，已转后台更新: $(printf '%s' "$due" | tr '\n' ' ')" >> "$log"
+
+	# setsid：看门狗被系统回收时更新也能跑完，不会留下写了一半的规则文件。
+	# 结束时无论成败都清 .running；真被强杀留下的孤儿标记由 rules_job_alive
+	# 在下次调用时清理。
+	if command -v setsid >/dev/null 2>&1; then
+		runner='setsid'
+	else
+		runner=''
+	fi
+	# shellcheck disable=SC2086
+	$runner sh -c '
+		sh "$1" rulesrc update all >> "$2" 2>&1
+		rc=$?
+		echo "[watchdog] $(date +%c) 规则源更新结束 (rc=$rc)" >> "$2"
+		rm -f "$3"
+	' _ "$MODDIR/command.sh" "$log" "$RULES_STATE/.running" >/dev/null 2>&1 &
 	return 0
 }
 
@@ -1315,7 +1332,7 @@ watch_loop() {
 				if proc_net_ok && ! port_busy "$Main_PORT"; then
 					dead=$((dead + 1))
 					if [ "$dead" -ge 3 ]; then
-						out=$(sh "$MODDIR/command.sh" start 2>&1)
+						out=$(sh "$MODDIR/command.sh" start-auto 2>&1)
 						rc2=$?
 						{
 							echo "[watchdog] $(date +%c) 内核进程在，但端口 $Main_PORT 没在监听，已重启 (start rc=$rc2)"
@@ -1364,7 +1381,7 @@ watch_loop() {
 			sleep 5
 			continue
 		fi
-		out=$(sh "$MODDIR/command.sh" start 2>&1)
+		out=$(sh "$MODDIR/command.sh" start-auto 2>&1)
 		rc2=$?
 		if [ "$rc2" -eq 0 ]; then fail=0; else fail=$((fail + 1)); fi
 		{
@@ -1439,9 +1456,31 @@ get_args() {
 			print_help 0
 			;;
 
-		start) # 启动
+		start) # 启动（用户主动：清掉停止标记）
 			rm -f "$STOP_FLAG"
 			server_restart
+			;;
+
+		start-auto) # 看门狗拉起（不抹用户的停止标记）
+			# 用户已经点了停止：直接返回，STOP_FLAG 继续生效。
+			# 原来看门狗和手动启动共用 start，start 会无条件 rm 标记：
+			# 用户点停止的同一瞬间看门狗发起拉起，标记被抹掉 → 服务自己又起来，
+			# 界面显示"已停止"、DNS 却在跑。
+			# 注意用 if 而不是 `[ ... ] && exit`：log=yes 时 main 开了 set -e，
+			# AND-list 在标记不存在时返回 1，会把启动直接打断（同 C5 的坑）。
+			if [ -f "$STOP_FLAG" ]; then
+				exit 0
+			fi
+			server_restart
+			rc=$?
+			# 启动过程中用户可能点了停止（重启要几百毫秒到几秒）：
+			# 这时必须把刚拉起的核按停止流程收掉，否则同样留下僵尸态。
+			if [ -f "$STOP_FLAG" ]; then
+				iptrules_off
+				server_stop
+				exit 0
+			fi
+			exit "$rc"
 			;;
 
 		stop) # 停止
