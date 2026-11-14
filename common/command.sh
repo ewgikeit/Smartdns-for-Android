@@ -204,7 +204,8 @@ diag_info() {
 				echo '本机模式拦截: 未生效（链中放行 uid 0 = netd，系统解析不会被重定向）'
 				echo '              要拦截请把系统 DNS / 私人DNS 指向 127.0.0.1:'"$Main_PORT"
 			else
-				echo '本机模式拦截: 已生效（链中未放行 uid 0）'
+				echo '本机模式拦截: 已生效（按目的地放行内核上游，netd 的查询会被重定向）'
+				echo "              放行的上游: $(core_upstream_ips 2>/dev/null | tr '\n' ' ')"
 			fi
 			;;
 	esac
@@ -704,6 +705,45 @@ iptrules_assert_clear() {
 
 
 
+# 列出「内核自己会去连的明文 DNS 上游」IP（审查 C6 的放行依据）。
+#
+# 为什么要这个：链首放行 uid 0 能把内核自己的上游查询放过去（防自环），但 Android
+# 的 netd 也是 uid 0，于是系统解析被一起放行 —— 本机模式对普通应用完全无效（真机
+# 实测 dns_redirect 里 uid-0 计数 40、REDIRECT 恒 0）。既然两者同 UID，改从「目的地」
+# 区分：把这几个上游 IP 放行，其余（netd 发给路由器的查询）照常重定向。
+#
+# 只统计明文 :53 的 `server` 行；DoT(853)/DoH(443) 不经过 --dport 53，用不着放行。
+# 主机名形式的明文上游必须能用 `address /名字/IP` 钉死，钉不住就输出 UNRESOLVED，
+# 调用方据此退回「放行 uid 0」的老做法 —— 宁可本机模式不生效，也不能让内核自环。
+core_upstream_ips() {
+	awk '
+	# 第一遍：收集 address /名字/IP 的固定映射
+	FNR == NR {
+		if ($1 == "address") {
+			n = split($2, a, "/")
+			if (n >= 3 && a[3] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) pin[a[2]] = a[3]
+		}
+		next
+	}
+	# 第二遍：看每个明文 server
+	$1 == "server" {
+		h = $2
+		if (h ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(:[0-9]+)?$/) { sub(/:.*/, "", h); print h; next }
+		if (h ~ /:/) next                  # IPv6 字面量：v4 链用不着，忽略
+		if (h in pin) { print pin[h]; next }
+		print "UNRESOLVED:" h
+	}
+	' "$CONF_FILE" "$CONF_FILE" 2>/dev/null
+}
+
+# 明文上游是否都能落到具体 IP（能，才敢用「按目的地放行」）
+core_upstream_ok() {
+	case "$(core_upstream_ips)" in
+		*UNRESOLVED:*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
 # 加载重定向规则
 iptrules_load() {
 	# [iptables/ip6tables]  [-A/-D]
@@ -711,8 +751,17 @@ iptrules_load() {
 	
 	# LOCAL
 	if [[ "$MODE" == *'local'* ]]; then
-		# 特定UID 放行
-		iptrules_accept ${ipt} ${action} 'dns_redirect'
+		# 审查 C6：优先「按目的地放行内核自己的上游」，而不是放行 uid 0。
+		# 只有 v4 链能做（core_upstream_ips 给的是 v4 地址）；v6 链照旧放行 uid 0。
+		if [ "$ipt" = 'iptables' ] && core_upstream_ok; then
+			iptrules_accept ${ipt} ${action} 'dns_redirect' 'no'
+			for IP in $(core_upstream_ips); do
+				${ipt} -w 5 -t nat ${action} dns_redirect -d "$IP" -j RETURN
+			done
+		else
+			# 特定UID 放行（含 uid 0，行为与旧版一致）
+			iptrules_accept ${ipt} ${action} 'dns_redirect'
+		fi
 		# tun接口 放行
 		[ "$TUN" == 'yes' ] && ${ipt} -w 5 -t nat ${action} dns_redirect -o tun+ -j RETURN
 		# wlan接口 放行
@@ -756,9 +805,11 @@ iptrules_load() {
 	## dns_block 链 (IPv6)
 	# ${ipt} -w 5 -t filter ${action} dns_block -m owner --uid-owner $uid -j RETURN
 iptrules_accept() {
-	[ -z "$PKG" ] && return 0
-	local ipt=${1} action=${2}
-	local tables chains uid
+	# $4 = 是否放行 uid 0（默认 yes）。审查 C6：dns_redirect 在没有把 uid 0 放进
+	# 放行名单时，说明调用方改用了「按目的地放行上游」，这里就不能再放过 netd。
+	[ -z "$PKG" ] && [ "${4:-yes}" = 'yes' ] && return 0
+	local ipt=${1} action=${2} allow_root=${4:-yes}
+	local tables chains uid list
 	case "${3}" in
 		dns_block)
 		tables='filter'; chains='dns_block';;
@@ -766,7 +817,10 @@ iptrules_accept() {
 		tables='nat'; chains='dns_redirect';;
 	esac
 
-	for uid in '0' '1001' $PKG
+	# 放行名单：uid 0（netd/内核，二者同 UID，见 C6）+ shell + 用户指定的应用
+	list='1001'
+	[ "$allow_root" = 'yes' ] && list="0 $list"
+	for uid in $list $PKG
 	do
 		# 包名转换UID
 		echo "$uid" |grep -q -i '[a-z]' && uid=$(grep -m1 -i $uid /data/system/packages.list |cut -d' ' -f2)
