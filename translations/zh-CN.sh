@@ -4,6 +4,8 @@ cat << HELP
 用法: $CORE_NAME [ OPTIONS ]
   start
     启动服务
+  restart
+    重启服务（等价于 stop + start）
   run-mod
     运行mod脚本
   stop
@@ -118,6 +120,6 @@ print_listenPort_not_set(){
 }
 
 print_iptRules_remove_errors(){
-	echo -e "[错误]: 防火墙规则 移除出错\n[信息]: 运行 \`$CORE_NAME -clean\` 以重置网络设置"
-	# echo -e "[Error]: iptrules remove error.\n[Info]: Run \`$CORE_NAME -clean\` to reset network settings."
+	echo -e "[错误]: 防火墙规则 移除出错\n[信息]: 运行 \`$CORE_NAME clean\` 以重置网络设置"
+	# echo -e "[Error]: iptrules remove error.\n[Info]: Run \`$CORE_NAME clean\` to reset network settings."
 }

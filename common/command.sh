@@ -1531,7 +1531,7 @@ get_args() {
 			print_help 0
 			;;
 
-		start) # 启动（用户主动：清掉停止标记）
+		start|restart) # 启动 / 重启（server_restart 本身就是先停再起）
 			rm -f "$STOP_FLAG"
 			server_restart
 			;;
