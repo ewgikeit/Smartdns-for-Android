@@ -1120,7 +1120,7 @@ function saveConf(btn) {
   setBusy(btn, true, '保存中…');
   function putConf(force) {
     var args = [q('smartdns.conf'), q(b64)];
-    if (force) args.push('force');
+    if (force) args.push('1');
     return shell('put', args);
   }
   putConf(false).catch(function (e) {

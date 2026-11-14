@@ -203,6 +203,7 @@ conf_bind_port() {
 		p = $2
 		sub(/@.*$/, "", p)      # 去掉 @wlan0 这类绑定设备
 		sub(/^.*:/, "", p)      # 去掉 [::] / 0.0.0.0 / IP 部分
+		sub(/\r$/, "", p)       # Windows 编辑过的配置是 CRLF
 		if (p ~ /^[0-9]+$/) { print p; exit }
 	}' "$CONF" 2>/dev/null
 }
@@ -584,7 +585,7 @@ do_put() {
 		rm -f "$tmp"
 		err "配置检查未通过，已放弃写入：$check_msg"
 	fi
-	if [ "$crc" -eq 2 ] && [ "$force" != '1' ]; then
+	if [ "$crc" -eq 2 ] && [ "$force" = '0' ]; then
 		rm -f "$tmp"
 		err "WARN:CONFIG:${check_msg}。仍要保存请确认。"
 	fi
