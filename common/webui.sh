@@ -28,7 +28,19 @@ CORE_BIN="$CORE_INTERNAL_DIR/$CORE_NAME"
 WEBUI_BAK="$CONF.webui.bak"
 FACTORY_CONF="$MODDIR/defaults/smartdns.conf"
 CHECK_CONF="$DATA_INTERNAL_DIR/.webui-check.conf"
-TMP_PREFIX="${TMP_PREFIX:-/data/local/tmp/smartdns-webui}"
+
+# WebUI 会把用户配置解码到临时文件（里面有上游、代理地址等），默认 umask 022
+# 留下的是 0644 —— /data/local/tmp 全局可读，本机任何应用都能捡走。
+# 077 让临时文件只有 root 可读；正式配置写入后都有显式 chmod 0644。
+umask 077
+
+# 临时目录放在 /data/local/tmp/$CORE_NAME 下：
+#   1. 卸载脚本本来就 rm -rf 这个父目录，不会留下 smartdns-webui.<pid>；
+#   2. 目录本身 chmod 0700，连文件名都不给别的应用看。
+WEBUI_TMP_DIR="${WEBUI_TMP_DIR:-/data/local/tmp/$CORE_NAME}"
+TMP_PREFIX="${TMP_PREFIX:-$WEBUI_TMP_DIR/webui}"
+mkdir -p "$WEBUI_TMP_DIR" 2>/dev/null
+chmod 0700 "$WEBUI_TMP_DIR" 2>/dev/null
 
 err() {
 	echo "$*" >&2

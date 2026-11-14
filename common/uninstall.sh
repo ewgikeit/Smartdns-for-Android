@@ -41,6 +41,9 @@ rm -rf "$DATA_BASE"
 
 # 4. 脚本临时目录（lib.sh 里 SCRIPT_TEMP_DIR 的父目录）
 rm -rf "/data/local/tmp/$CORE_NAME"
+# 旧版本把 WebUI 临时配置摊在 /data/local/tmp/smartdns-webui.<pid>，
+# 升级到新布局后卸载时要把这批残留一起清掉（含解码出来的完整配置）
+rm -f /data/local/tmp/"$CORE_NAME"-webui.* 2>/dev/null
 
 # 5. 上游原版模块（id 用架构命名）残留，只删确认是 smartdns 的目录
 for old in /data/adb/modules/smartdns-aarch64 /data/adb/modules/smartdns-arm; do
