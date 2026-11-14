@@ -598,50 +598,95 @@ iptrules_on() {
 
 
 
+# 删一条规则：删到删不动为止。删不到说明本来就没有，不算错误（幂等是硬要求）。
+# 上限 32 次只是防呆，正常最多删几次就返回非 0 了。
+_del_all() {
+	local ipt="$1"; shift
+	local n=0
+	while [ "$n" -lt 32 ] && ${ipt} -w 5 "$@" 2>/dev/null; do n=$((n + 1)); done
+	return 0
+}
+
+# 清理本模块装过的所有防火墙规则。
+#
+# 审查 C1：这里原来拿 MODE 当开关（不是 local/proxy 就直接 return），可
+# iptrules_on 同样按 MODE 短路，于是「改成仅服务 → 停止/卸载」时一条规则都不删，
+# nat 表里仍把 53 重定向到已经没人监听的端口，整机 DNS 直接不可用。清理必须看
+# 「实际装过什么」，与当前配置无关 —— 因此去掉 MODE / IP6T_BLOCK 判断，
+# v4/v6 两个方向的规则都删一遍（删不到就当没装过）。
+#
+# 审查 C2：原来是 `while iptrules_check` 收敛 + 超过 3 轮 exit 1。但 iptrules_check
+# 的判据是「nat 表里还有指向本模块端口的 REDIRECT」，而 proxy 模式装的是
+# PREROUTING 规则，本函数从来没删过 —— local,proxy 下必然死循环，第 5 轮 exit 1。
+# 这个 exit 正好落在 server_restart 的 server_stop 与 server_start 之间：内核已停、
+# 规则删了一半，看门狗再拉一次还是 exit 1 → 永久断网且自愈失效。
+# 现在改成「删跳转 → 清链 → 删链」的固定序列，任何一步失败都继续往下走。
+#
+# 审查 C5：原来循环末尾 `|| let count++` 在 count=0 时返回 1（后自增返回旧值），
+# 清理成功反而让函数返回 1；log=yes 时 command.sh 带 set -ex，直接中断 start/stop。
+# 循环去掉后这个问题自然消失，函数恒定 return 0。
 iptrules_off() {
-	if [[ "$MODE" != *'local'* && "$MODE" != *'proxy'* ]]; then
+	local IPP spec
+	#  IPv4
+	for IPP in $packet_type; do
+		_del_all iptables -t nat -D OUTPUT -p ${IPP} --dport 53 -j dns_redirect
+		_del_all iptables -t nat -D POSTROUTING -p ${IPP} -m mark --mark 0x853 -j SNAT --to-source 127.0.0.1
+	done
+	# proxy 模式装的是 PREROUTING 跳转，规格里带 -d <本机IP>，IP 变了就删不掉，
+	# 因此按「目标端口」从 -S 里反查整条规格再原样 -D（审查 C2）
+	if [ -n "$Second_PORT" ]; then
+		iptables -w 5 -t nat -S PREROUTING 2>/dev/null | sed -n 's/^-A /-D /p' | \
+		while read -r spec; do
+			case "$spec" in
+				*"--to-ports ${Second_PORT}") iptables -w 5 -t nat $spec 2>/dev/null || true ;;
+			esac
+		done
+	fi
+	# 审查 C5 补充：log=yes 时 main 带 set -ex，真机上 `-F` 因为链已不存在返回 1，
+	# 直接把 stop 打断（内核没停、标记已置）。清理里的每条命令都必须吞掉退出码。
+	iptables -w 5 -t nat -F dns_redirect 2>/dev/null || true
+	iptables -w 5 -t nat -X dns_redirect 2>/dev/null || true
+
+
+	#  IPv6
+	# 封锁(dns_block)与重定向(dns_redirect)两条路都清，不按 IP6T_BLOCK 二选一
+	for IPP in $packet_type; do
+		_del_all ip6tables -t nat -D OUTPUT -p ${IPP} --dport 53 -j dns_redirect
+		_del_all ip6tables -t nat -D POSTROUTING -p ${IPP} -m mark --mark 0x853 -j SNAT --to-source ::1
+		_del_all ip6tables -t filter -D OUTPUT -p ${IPP} --dport 53 -j dns_block
+	done
+	ip6tables -w 5 -t nat -F dns_redirect 2>/dev/null || true
+	ip6tables -w 5 -t nat -X dns_redirect 2>/dev/null || true
+	ip6tables -w 5 -t filter -F dns_block 2>/dev/null || true
+	ip6tables -w 5 -t filter -X dns_block 2>/dev/null || true
+
+	iptrules_assert_clear
+	return 0
+}
+
+# 清完再验一次（审查 C1 的验收标准）：nat 表里只要还有指向本模块端口的 REDIRECT，
+# 就把这些跳转整条扫出来再删一遍，并留一条 boot.log。只告警，绝不 exit。
+iptrules_assert_clear() {
+	local p spec left=''
+	for p in $Main_PORT $Second_PORT; do
+		[ -n "$p" ] || continue
+		iptables -w 5 -t nat -S 2>/dev/null | sed -n 's/^-A /-D /p' | \
+		while read -r spec; do
+			case "$spec" in
+				*"--to-ports ${p}"*) iptables -w 5 -t nat $spec 2>/dev/null || true ;;
+			esac
+		done
+		# 用 if 而不是 `cmd && 语句`：log=yes 时 shell 带 set -e，
+		# 一个「没匹配到」的 grep 就能把整个 stop 打断
+		if iptables -w 5 -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ${p}$"; then
+			left="$left ${p}/v4"
+		fi
+	done
+	if [ -z "$left" ]; then
 		return 0
 	fi
-	local count='0' IPP
-	while iptrules_check; do
-		#  IPv4
-		# 移除外链
-		for IPP in $packet_type
-		do
-			iptables -w 5 -t nat -D OUTPUT -p ${IPP} --dport 53 -j dns_redirect
-			iptables -w 5 -t nat -D POSTROUTING -p ${IPP} -m mark --mark 0x853 -j SNAT --to-source '127.0.0.1'
-		done
-		# 清空删除链
-		iptables -w 5 -t nat -F dns_redirect
-		iptables -w 5 -t nat -X dns_redirect
-
-
-		#  IPv6
-		if [ "$IP6T_BLOCK" == 'yes' ]; then
-			# 封锁
-			# 移除封锁引用
-			for IPP in 'udp' 'tcp'
-			do
-				ip6tables -w 5 -t filter -D OUTPUT -p ${IPP} --dport 53 -j dns_block
-			done
-			# 清空删除链
-			ip6tables -w 5 -t filter -F dns_block
-			ip6tables -w 5 -t filter -X dns_block
-		else
-			# 重定向
-			# 移除外链
-			for IPP in $packet_type
-			do
-				ip6tables -w 5 -t nat -D OUTPUT -p ${IPP} --dport 53 -j dns_redirect
-				ip6tables -w 5 -t nat -D POSTROUTING -p ${IPP} -m mark --mark 0x853 -j SNAT --to-source '::1'
-			done
-			# 清空删除链
-			ip6tables -w 5 -t nat -F dns_redirect
-			ip6tables -w 5 -t nat -X dns_redirect
-		fi
-		# 防出错
-		[ "${count}" -gt '3' ] && { print_iptRules_remove_errors; exit 1; } || let count++
-	done
+	boot_note "防火墙规则有残留:${left}（已强制清理，仍残留请重启设备）"
+	return 0
 }
 
 
@@ -1212,6 +1257,10 @@ get_args() {
 
 		clean) # 清除
 			touch "$STOP_FLAG" 2>/dev/null
+			# 审查 C1：先按「实际装过的」清一遍自建链与外链。只靠下面的
+			# iptables-restore 是不行的：备份在 tmpfs，缺失时 restore 静默失败，
+			# 而且 PREROUTING 的代理跳转从来不在备份的还原范围里。
+			iptrules_off
 			# 还原 iptables
 			# iptables -F
 			# ip6tables -F
