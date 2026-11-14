@@ -60,9 +60,14 @@ download_links() {
 	# $1 链接	$2 下载文件名
 	local file_link="$1" file_name="$2" tries
 
+	# 审查 C4：这里原来是 `curl -k` / `wget --no-check-certificate`，TLS 只加密
+	# 不验身份。下载到的 hosts 会被转成 `address /域名/IP` 写进内核配置（root 权限、
+	# 没有任何人工确认），中间人就能决定任意域名解析到哪 —— 公共 Wi-Fi、拦截门户
+	# 都能利用。改成强制 https + 校验证书 + 限制大小。
 	if $(curl -V > /dev/null 2>&1) ; then
 		for tries in $(seq 1 20); do
-			if curl "${file_link}" -k -L -o "$file_name" >&2; then
+			if curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --max-filesize 67108864 \
+					"${file_link}" -o "$file_name" >&2; then
 				break;
 			fi
 			sleep 2
@@ -74,7 +79,9 @@ download_links() {
 		done
 	elif $(wget --help > /dev/null 2>&1) ; then
 		for tries in $(seq 1 5); do
-			if wget --no-check-certificate ${file_link} -O $file_name; then
+			# busybox wget 默认就校验证书，去掉 --no-check-certificate 即可；
+			# --https-only 让它拒绝明文链接（老版本没有这个开关，失败也算安全）
+			if wget --https-only -T 30 -t 2 ${file_link} -O $file_name; then
 				break;
 			fi
 			if [[ $tries == 5 ]]; then
