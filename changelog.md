@@ -4,6 +4,29 @@
 
 代码评审（2026-11-14）修复中，下列条目已落地但尚未发版。
 
+### 修复：规则存在性判定（评审外，自行发现）
+
+- `iptrules_check` / `webui.sh` 的 `ipt_active` 把 `($Main_PORT|$Second_PORT)` 直接
+  拼进正则：`Second_PORT` 在 start 之前是空串，空分支让**任意一条** REDIRECT 都命中
+  （真机 `script_conf.sh` 里 `Second_PORT` 确实是空的）。判据还锚不到
+  `--to-ports`，`--to-ports 16053` 也会被当成自己的规则。两处都改成
+  「跳过空端口 + 锚定 `--to-ports`」。
+
+### 已知限制：本机模式拦不到系统解析（评审 C6）
+
+真机实测确认：`dns_redirect` 里 `--uid-owner 0 -j RETURN` 的计数在持续增长，
+而 `REDIRECT --to-ports 6053` 恒为 0 —— Android 的 netd 以 uid 0 发包，链首那条
+放行把整个系统解析都放过去了，所以 `MODE=local` 对普通应用**不生效**。要看拦截
+效果，只能把系统 DNS / 私人 DNS 指向 `127.0.0.1:6053`。
+
+评审建议的修法是让内核跑在专用 UID 上、链里只放行那个 UID。这一版**没有采用**：
+`/data/adb` 是 0700，非 root 进不去，内核写不了 `/data/adb/smartdns/log/`，
+`setuidgid` 预检直接失败（真机验证过）。要真正修好，得先改日志/缓存的落盘布局
+（挪到 `/dev/smartdns` 那套 tmpfs 挂载里），属于结构改动，留待单独评估。
+
+现在 `command.sh diag` 会把这件事直接打出来（「本机模式拦截: 未生效」+ 怎么改），
+不用再靠计数器推断。
+
 ### 修复：防火墙规则清理（评审 C1 / C2 / C5）
 
 - **C1** `iptrules_off` 原来拿 `MODE` 当开关，改成「仅服务」模式后再停止/卸载就

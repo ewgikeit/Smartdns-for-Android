@@ -116,9 +116,14 @@ is_running() {
 }
 
 # 与 command.sh 的 iptrules_check 保持一致的判定
+# 端口为空时不拼进正则（空分支会让任意 REDIRECT 命中），并锚定 --to-ports
 ipt_active() {
 	local p1="$1" p2="$2"
-	iptables -t nat -S 2>/dev/null | grep -qE "REDIRECT.*--to-ports ($p1|$p2)"
+	[ -n "$p1" ] || return 1
+	if [ -n "$p2" ] && [ "$p2" != "$p1" ]; then
+		p1="$p1|$p2"
+	fi
+	iptables -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ($p1)$"
 }
 
 # 预建运行环境，避免 command.sh 首次启动时进入最长 10 分钟的联网等待

@@ -195,6 +195,19 @@ diag_info() {
 			echo '（无 dns_block 链）'
 		fi
 	fi
+	# 审查 C6 的现场判据：链里放行了 uid 0，而 Android 的 netd 正是 uid 0。
+	# 这意味着「本机模式」拦不到系统解析（普通应用都走 netd），REDIRECT 计数
+	# 会一直是 0。真机实测结论，见 changelog 4.2.2「已知限制」。
+	case "$MODE" in
+		*local*)
+			if iptables -w 5 -t nat -S dns_redirect 2>/dev/null | grep -q -- '--uid-owner 0 '; then
+				echo '本机模式拦截: 未生效（链中放行 uid 0 = netd，系统解析不会被重定向）'
+				echo '              要拦截请把系统 DNS / 私人DNS 指向 127.0.0.1:'"$Main_PORT"
+			else
+				echo '本机模式拦截: 已生效（链中未放行 uid 0）'
+			fi
+			;;
+	esac
 
 	echo '===== 当前设置 ====='
 	echo "Main_PORT=$Main_PORT Second_PORT=$Second_PORT MODE=$MODE TUN=$TUN WLAN=$WLAN DATA=$DATA log=$log"
@@ -962,22 +975,22 @@ server_check() {
 
 # 检查防火墙状态
 iptrules_check() {
-if [ "$IP6T_BLOCK" == 'yes' ]; then
-	if iptables -w 5 -t nat -S 2>/dev/null |grep -q -E "REDIRECT.+($Main_PORT|$Second_PORT)$" ; then
-		return 0
-	else
-		return 1
+	# Second_PORT 在 start 之前是空串，直接拼进正则会变成 `(6053|)` —— 空分支让
+	# 任何一条 REDIRECT 都命中（真机 script_conf 里 Second_PORT 确实是空的）。
+	# 顺带把判据锚到 `--to-ports`，否则 `--to-ports 16053` 也会被当成命中。
+	local ports="$Main_PORT"
+	if [ -n "$Second_PORT" ] && [ "$Second_PORT" != "$Main_PORT" ]; then
+		ports="$ports|$Second_PORT"
 	fi
-else
-	if iptables -w 5 -t nat -S 2>/dev/null |grep -q -E "REDIRECT.+($Main_PORT|$Second_PORT)$" \
-	|| ip6tables -w 5 -t nat -S 2>/dev/null |grep -q -E "REDIRECT.+($Main_PORT|$Second_PORT)$"; then
+	if iptables -w 5 -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ($ports)$"; then
 		return 0
-	else
-		return 1
 	fi
-fi
-#iptables -w 5 -t nat -nL PREROUTING 2>/dev/null | grep REDIRECT | grep dpt:53 | grep %q >/dev/null 2>&1
-#ip6tables -w 5 -t nat -nL PREROUTING 2>/dev/null | grep REDIRECT | grep dpt:53 | grep %q >/dev/null 2>&1
+	if [ "$IP6T_BLOCK" != 'yes' ]; then
+		if ip6tables -w 5 -t nat -S 2>/dev/null | grep -qE "REDIRECT.+--to-ports ($ports)$"; then
+			return 0
+		fi
+	fi
+	return 1
 }
 
 # 检查服务状态
