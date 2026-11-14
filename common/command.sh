@@ -715,25 +715,55 @@ iptrules_assert_clear() {
 # 只统计明文 :53 的 `server` 行；DoT(853)/DoH(443) 不经过 --dport 53，用不着放行。
 # 主机名形式的明文上游必须能用 `address /名字/IP` 钉死，钉不住就输出 UNRESOLVED，
 # 调用方据此退回「放行 uid 0」的老做法 —— 宁可本机模式不生效，也不能让内核自环。
+# 主配置 + 它 include 进来的 conf-file（相对路径按「被包含文件所在目录」解析）。
+# 之前只读主配置，用户把 server 写进 conf-file 里就会漏掉 —— 漏掉的明文上游
+# 会被自己的重定向劫持，直接自环。层数与文件数都设了上限，防止被奇怪的配置拖死。
+core_conf_files() {
+	local f base list="$TEMP_DIR/.conflist.$$" cur="$TEMP_DIR/.confcur.$$" depth=0
+	printf '%s\n' "$CONF_FILE" > "$cur"
+	: > "$list"
+	while [ -s "$cur" ] && [ "$depth" -lt 3 ]; do
+		: > "$cur.next"
+		while IFS= read -r f; do
+			[ -n "$f" ] || continue
+			grep -qxF "$f" "$list" 2>/dev/null && continue
+			[ -f "$f" ] || continue
+			printf '%s\n' "$f" >> "$list"
+			base=$(dirname "$f")
+			awk -v b="$base" '
+				/^[[:space:]]*conf-file[[:space:]]+/ {
+					p = $2
+					if (p !~ /^\//) p = b "/" p
+					print p
+				}' "$f" 2>/dev/null >> "$cur.next"
+		done < "$cur"
+		mv -f "$cur.next" "$cur" 2>/dev/null
+		depth=$((depth + 1))
+	done
+	cat "$list" 2>/dev/null
+	rm -f "$list" "$cur" "$cur.next" 2>/dev/null
+}
+
 core_upstream_ips() {
+	core_conf_files 2>/dev/null | while IFS= read -r f; do cat "$f" 2>/dev/null; done | \
 	awk '
-	# 第一遍：收集 address /名字/IP 的固定映射
-	FNR == NR {
-		if ($1 == "address") {
-			n = split($2, a, "/")
-			if (n >= 3 && a[3] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) pin[a[2]] = a[3]
-		}
+	# 先把所有 address 钉死的映射和 server 行都收下来，最后统一判定：
+	# 这样 address 写在 server 后面也不影响结果。
+	$1 == "address" {
+		n = split($2, a, "/")
+		if (n >= 3 && a[3] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) pin[a[2]] = a[3]
 		next
 	}
-	# 第二遍：看每个明文 server
-	$1 == "server" {
-		h = $2
-		if (h ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(:[0-9]+)?$/) { sub(/:.*/, "", h); print h; next }
-		if (h ~ /:/) next                  # IPv6 字面量：v4 链用不着，忽略
-		if (h in pin) { print pin[h]; next }
-		print "UNRESOLVED:" h
-	}
-	' "$CONF_FILE" "$CONF_FILE" 2>/dev/null
+	$1 == "server" { order[++cnt] = $2 }
+	END {
+		for (i = 1; i <= cnt; i++) {
+			h = order[i]
+			if (h ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(:[0-9]+)?$/) { sub(/:.*/, "", h); print h; continue }
+			if (h ~ /:/) continue                       # IPv6 字面量：v4 链用不着
+			if (h in pin) { print pin[h]; continue }
+			print "UNRESOLVED:" h
+		}
+	}'
 }
 
 # 明文上游是否都能落到具体 IP（能，才敢用「按目的地放行」）
@@ -742,6 +772,40 @@ core_upstream_ok() {
 		*UNRESOLVED:*) return 1 ;;
 		*) return 0 ;;
 	esac
+}
+
+# 内核这次启动时实际读到的上游清单。规则必须按它生成，而不是按磁盘上
+# 可能已经被改过、但内核还没重启的 smartdns.conf —— 否则「改了配置没重启」
+# 期间重装一次规则，规则按新配置、内核还在用旧配置，两边对不上就自环。
+CORE_UPSTREAM_SNAP="$TEMP_DIR/.upstream.ips"
+core_upstream_snapshot() {
+	core_upstream_ips > "$CORE_UPSTREAM_SNAP" 2>/dev/null
+	return 0
+}
+core_upstream_list() {
+	if [ -f "$CORE_UPSTREAM_SNAP" ]; then
+		cat "$CORE_UPSTREAM_SNAP" 2>/dev/null
+	else
+		core_upstream_ips 2>/dev/null
+	fi
+}
+core_upstream_list_ok() {
+	case "$(core_upstream_list)" in
+		*UNRESOLVED:*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+# 链里的“按目的地放行”是否与清单一致（看门狗定期对账用，返回 0 表示一致）
+iptrules_dest_synced() {
+	local want have
+	# 放行了 uid 0 说明走的是旧模式，没有按目的地放行这么一说
+	iptables -w 5 -t nat -S dns_redirect 2>/dev/null | grep -q -- '--uid-owner 0 ' && return 0
+	want=$(core_upstream_list 2>/dev/null | grep -v '^UNRESOLVED:' | sort -u)
+	have=$(iptables -w 5 -t nat -S dns_redirect 2>/dev/null \
+		| sed -n 's/^-A dns_redirect -d \([^ ]*\) -j RETURN$/\1/p' \
+		| sed 's#/32$##' | sort -u)
+	[ "$want" = "$have" ]
 }
 
 # 加载重定向规则
@@ -753,9 +817,9 @@ iptrules_load() {
 	if [[ "$MODE" == *'local'* ]]; then
 		# 审查 C6：优先「按目的地放行内核自己的上游」，而不是放行 uid 0。
 		# 只有 v4 链能做（core_upstream_ips 给的是 v4 地址）；v6 链照旧放行 uid 0。
-		if [ "$ipt" = 'iptables' ] && core_upstream_ok; then
+		if [ "$ipt" = 'iptables' ] && core_upstream_list_ok; then
 			iptrules_accept ${ipt} ${action} 'dns_redirect' 'no'
-			for IP in $(core_upstream_ips); do
+			for IP in $(core_upstream_list | grep -v '^UNRESOLVED:'); do
 				${ipt} -w 5 -t nat ${action} dns_redirect -d "$IP" -j RETURN
 			done
 		else
@@ -909,6 +973,8 @@ server_start() {
 				fi
 				# PID写入文件
 				echo "$PID" > $PID_FILE
+				# 审查 C6：把「这次启动读到的上游清单」钉下来，规则一律按它生成
+				core_upstream_snapshot
 				print_server_start_success
 				break
 			fi
@@ -1156,7 +1222,7 @@ watch_singleton() {
 }
 
 watch_loop() {
-	local rc2 out first=20 fail=0 gap dead=0
+	local rc2 out first=20 fail=0 gap dead=0 rtick=0
 	# 常驻进程里绝不能留着 -e / -x：log=yes 时 main 会开 set -ex，
 	# 任何一次非 0 返回都会把看门狗自己干掉
 	set +e
@@ -1199,6 +1265,18 @@ watch_loop() {
 				# 服务本身没问题时，顺带看看有没有规则源到期。
 				# 不额外起守护进程：crond 在 Magisk 环境里的坑已经踩过一次了。
 				watch_rules
+				# 审查 C6 补充：定期对账「按目的地放行」的列表（约 5 分钟一次）。
+				# 规则按内核启动时的快照生成，所以正常不会不一致；这里兜的是
+				# iptables 被别的工具改过、或重装规则时漏了的情况 —— 只重装规则，
+				# 不动内核进程。
+				rtick=$((rtick + 1))
+				if [ "$rtick" -ge 10 ]; then
+					rtick=0
+					if ! iptrules_dest_synced; then
+						sh "$MODDIR/command.sh" rules >/dev/null 2>&1
+						boot_note "[watchdog] 防火墙放行列表与内核实际使用的上游不一致，已重装规则"
+					fi
+				fi
 				continue
 			fi
 			out=$(sh "$MODDIR/command.sh" rules 2>&1)
