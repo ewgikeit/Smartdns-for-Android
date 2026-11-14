@@ -517,26 +517,18 @@ conf_log_fix() {
 	return 0
 }
 
-# 把主配置里的规则引用切到规则源管理器生成的那一个文件。
+# 保证主配置引用的规则文件确实存在。
 #
-# 老配置里是这样一串：
-#   conf-file ./block/defaults.conf
-#   conf-file ./ip/chnroute.txt
-#   conf-file ./domain_diverg/gfwlist.txt
-#   conf-file ./hosts/github.txt
-# 每条都指向一份静态快照，没有任何刷新手段。规则源管理器把这些文件统一
-# 生成为 ./rules/auto-<id>.conf，再由 ./rules/index.conf 汇总引用。
-#
-# 迁移是幂等的：已经是 index.conf 就什么都不做；只在首次遇到旧引用时替换，
-# 用户自己加的其他 conf-file 行原样保留。
+# 主配置只引用一个 ./rules/index.conf，由规则源管理器生成；内核遇到不存在的
+# conf-file 会直接拒绝启动，所以起进程之前必须把这三层补齐：
+#   1. 规则源元数据（sources.conf / seed / local.hosts）就位；
+#   2. 首次运行用包内快照铺一份规则，保证开机就有国内/国外分流和广告屏蔽；
+#   3. 合并文件与索引重建（升级后第一次启动、手改 sources.conf 后都要重建）。
 conf_rules_fix() {
 	[ -f "$CONF_FILE" ] || return 0
-	local tmp="$TEMP_DIR/.conf-rules.$$" orig="$CONF_FILE.bak" _f
+	local _f
 
-	# 规则文件必须先于配置存在，否则内核会因为 conf-file 打不开而拒绝启动
 	rules_init >/dev/null 2>&1
-	# 索引为空说明还没生成过任何规则：先用包内快照铺一份，保证内核起来时
-	# 国内/国外分流和广告屏蔽都在（远程源交给看门狗后台补）。
 	# 只做一次，之后即使 index 空了也不再自动重建 —— 那多半是用户自己清空的。
 	if [ ! -s "$RULES_OUT/index.conf" ] && [ ! -f "$RULES_STATE/.seeded" ]; then
 		rules_update_local_only >/dev/null 2>&1
@@ -552,34 +544,6 @@ conf_rules_fix() {
 		done
 	fi
 	rules_gen_index >/dev/null 2>&1
-
-	grep -qE '^[[:space:]]*conf-file[[:space:]]+\./rules/index\.conf' "$CONF_FILE" && return 0
-	# 只接管真正由订阅源生成的那几个；手写的固定规则（bogus-nxdomain、
-	# domain_diverg/defaults.conf、hosts/defaults.conf、blacklist-ip）保持直接引用
-	grep -qE '^[[:space:]]*conf-file[[:space:]]+\./(block/defaults\.conf|ip/chnroute\.txt|domain_diverg/chnlist\.txt|domain_diverg/gfwlist\.txt|hosts/github\.txt)' "$CONF_FILE" || return 0
-
-	awk '
-	/^[[:space:]]*conf-file[[:space:]]+\.\/(block\/defaults\.conf|ip\/chnroute\.txt|domain_diverg\/chnlist\.txt|domain_diverg\/gfwlist\.txt|hosts\/github\.txt)/ {
-		if (!done) {
-			print "# 订阅规则由「规则源」统一管理，生成物在 ./rules/ 下，改这里不生效"
-			print "conf-file ./rules/index.conf"
-			done = 1
-		}
-		next
-	}
-	{ print }
-	' "$CONF_FILE" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	[ -s "$tmp" ] || { rm -f "$tmp"; return 0; }
-
-	cp -f "$CONF_FILE" "$orig" 2>/dev/null
-	cat "$tmp" > "$CONF_FILE" 2>/dev/null || { rm -f "$tmp"; return 0; }
-	rm -f "$tmp"
-
-	echo '[提示]: 原来的静态规则列表已接入「规则源」管理。'
-	echo '        主配置不再直接引用 block/ip/domain_diverg 下的文件，'
-	echo '        改为引用 ./rules/index.conf，规则可在 WebUI「规则」页里更新。'
-	echo "        原配置已备份: $orig"
-	boot_note '规则引用切换到 rules/index.conf'
 	return 0
 }
 
@@ -807,9 +771,6 @@ server_start() {
 	conf_path_fix
 	conf_log_fix
 	conf_rules_fix
-	# 配置已经不再引用那些大表了，现在才敢删 config/ 下的重复副本
-	# （顺序不能反：先改引用再删文件，否则内核会因为 conf-file 打不开而拒绝启动）
-	rules_cleanup_legacy
 	free_port_for_start
 	local count='0' PID out="$LOG_DIR/core.log"
 	# 内核输出单独留档：启动失败时能直接看到原因（log=yes 时同时进 boot.log）
