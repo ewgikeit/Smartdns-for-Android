@@ -224,20 +224,22 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
   不可靠（chmod 近似 no-op），所以用静态约束锁住设计；真机行为由
   `umask 077` + `chmod 0700` 保证。
 
-### 修复：前端转义遗漏 / 保存前不做语法校验（评审 W10 / W20）
+### 修复：前端转义遗漏 / 保存前不做结构校验（评审 W10 / W20）
 
 - **W10** `rulesUpdate` 里的 `shell('rules', ['update', id])` 是唯一没走 `q()` 的
   调用：`id` 直接取自 `sources.conf` 原文，含空格或单引号时会被原样拼进
   `sh webui.sh rules update ...`。补上 `q(id)`，与其它 `rules` 调用一致。
-- **W20** `do_put` 原来只拦「没有 `bind`」和「`[::]` 与 `0.0.0.0` 同端口」，
-  拼错的指令、坏掉的 `conf-file` 引用要等重启失败才知道，只能靠看门狗反复试。
-  新增 `conf_check_tmp()`：保存前把内容写到 `config/.webui-check.conf`
-  （必须与正式配置同目录，`conf-file` 是相对路径），跑
-  `smartdns -c <tmp> -t` —— 只解析、不监听、不碰缓存；失败把内核输出的最后
-  4 行回传给前端。老版本内核没有 `-t` 时（输出带 `Usage:` / `unknown option`）
-  直接放行，不会把保存全挡掉。
-- 本地配套测试 `webui-tests/webui-check-test.sh`（12 项）：转义、`-t` 调用、
-  校验文件位置、通过/失败/不支持 `-t`/内核缺失四种行为、临时文件清理。
+- **W20** `do_put` 原来只拦「没有 `bind`」和「`[::]` 与 `0.0.0.0` 同端口」。
+  最初按 `smartdns -t` 实现，真机实测这个 Android 构建**没有 `-t`**
+  （help 里只有 `-f/-c/-p/-R/-S/-x`），而且它对未知配置项是宽容的：乱写一行、
+  端口写 99999、`conf-file` 指向不存在的文件，进程都照跑、rc 不变，
+  用「能不能起来」判断不出问题。改成两项确定性检查：
+  1. `conf-file` 引用的文件必须存在（相对路径基于 `config/`）；
+  2. `bind` / `bind-tcp` / `bind-tls` 的端口必须是 1-65535。
+  失败时把具体是哪条回传给前端。真机验证：缺文件、端口 99999 两类配置都被拒，
+  原文件 md5 不变；原配置可正常保存。
+- 本地配套测试 `webui-tests/webui-check-test.sh`（15 项）：转义、两类检查的
+  各失败分支、行内注释与注释行、原配置放行。
 
 ### 修复：回包无上限导致「执行通道异常」（评审 W11）
 
@@ -251,6 +253,27 @@ netd 也是 uid 0，普通应用的解析全走它 —— 真机实测 `dns_redi
   结果文本里追加一行「[已截断] 内核输出超过单次上限」。
 - 本地配套测试 `webui-tests/reply-limit-test.sh`（14 项）：三个动作都带标记、
   按字节截断、小文件完整、64 字节上限下的 cat/tail 行为、前端剥标记与提示。
+
+### 真机验证（RMX1901 / LineageOS 20 / Android 13）
+
+本轮改动已全部装到设备实测（脚本 md5 与仓库一致，mksh 语法全过）：
+
+- 服务 `stop` → `start`：rc 均为 0，端口正常监听；`port_busy` 在 toybox awk 上
+  判定正确（TIME_WAIT=空闲、LISTEN=占用）
+- `start-auto`：存在停止标记时直接返回，标记保留、服务不受影响
+- 看门狗：同时拉起两个只存活一个，`.watch.lock/pid` 与实际进程一致
+- 保存配置：缺 `conf-file`、端口 99999 都被拒且原文件 md5 不变；原配置保存成功
+- `cat`/`tail` 回包首行带 `truncated=0`，格式正常；WebUI 临时目录 0700
+- `ipt_bak_usable`=0（备份干净），`rulesrc/.running` 无残留
+- `boot.log` 无「端口仍被占用 / 规则未装全 / Address in use」；
+  `nslookup baidu.com 127.0.0.1` 正常
+
+两点环境发现（已在代码/设备上处理）：
+
+- 设备内核 `1.2026.08.05` 没有 `-t`，且对未知配置项宽容 —— W20 因此改成
+  确定性结构校验（见上）
+- `/data/local/tmp` 曾变成 `0750 root:root`，adb 无法写入；已恢复
+  `0771 root:shell`
 
 ## 4.2.1
 

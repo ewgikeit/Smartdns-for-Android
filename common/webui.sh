@@ -475,26 +475,44 @@ log_missing_hint() {
 	return 0
 }
 
-# 保存前的内核级校验：smartdns -t 只解析配置，不监听、不碰缓存。
-# 临时文件必须落在正式配置同目录：conf-file 全是相对路径
-# （./ip/...、./domain_diverg/...、./rules/...），换个目录就全打不开，
-# 好配置也会被判成坏配置。
-# 老版本内核没有 -t 时输出会带 Usage/unknown option，此时不拿它挡保存。
+# 保存前的配置结构校验。
+#
+# 这里不用 smartdns -t：真机实测这个 Android 构建没有 -t（只有 -f/-c/-p），
+# 而且它对未知配置项是宽容的——乱写一行、端口写 99999、conf-file 指向
+# 不存在的文件，进程都照样跑（rc 不会变），拿「能不能起来」判断不出问题。
+# 真正会把模块搞坏的是这两类，做确定性检查更可靠：
+#   1. conf-file 引用的文件不存在：规则静默缺失，而且下次 clean/重装时
+#      很容易踩到「内核拒绝启动」；
+#   2. bind 端口不是 1-65535：内核要么报错要么回退，用户完全看不出来。
 conf_check_tmp() {
-	local src="$1" ck="$DATA_INTERNAL_DIR/.webui-check.conf" out rc
-	[ -x "$CORE_BIN" ] || return 0
-	cp -f "$src" "$ck" 2>/dev/null || return 0
-	out=$(cd "$DATA_INTERNAL_DIR" && "$CORE_BIN" -c "$ck" -t 2>&1)
-	rc=$?
-	rm -f "$ck"
-	[ "$rc" -eq 0 ] && return 0
-	case "$out" in
-		*'nknown option'*|*'nvalid option'*|*'Usage:'*)
-			return 0
-			;;
-	esac
-	printf '%s\n' "$out" | tail -n 4
-	return 1
+	local src="$1" p missing='' bad=''
+	while IFS= read -r p; do
+		[ -n "$p" ] || continue
+		case "$p" in
+			/*) [ -f "$p" ] || missing="$missing $p" ;;
+			*)  [ -f "$DATA_INTERNAL_DIR/$p" ] || missing="$missing $p" ;;
+		esac
+	done <<EOF
+$(awk '{ sub(/#.*/, "") } $1 == "conf-file" { print $2 }' "$src" 2>/dev/null)
+EOF
+	if [ -n "$missing" ]; then
+		printf 'conf-file 引用的文件不存在：%s\n' "$missing"
+		return 1
+	fi
+
+	bad=$(awk '
+		{ sub(/#.*/, "") }
+		$1 ~ /^bind(-tcp|-tls)?$/ {
+			a = $2
+			sub(/^.*:/, "", a)
+			sub(/@.*$/, "", a)
+			if (a !~ /^[0-9]+$/ || a + 0 < 1 || a + 0 > 65535) { print $0; exit }
+		}' "$src" 2>/dev/null)
+	if [ -n "$bad" ]; then
+		printf 'bind 端口不合法：%s\n' "$bad"
+		return 1
+	fi
+	return 0
 }
 
 do_put() {
@@ -534,14 +552,14 @@ do_put() {
 		err "配置里 [::]:$dup 与 0.0.0.0:$dup 同时 bind，Android 下 IPv6 是双栈，内核会报 Address in use。二选一即可（推荐只保留 bind [::]:$dup）。"
 	fi
 
-	# 审查 W20：上面只拦了「没有 bind」和双栈冲突，拼错的指令、坏掉的
-	# conf-file 引用要等重启失败才知道，只能靠看门狗反复试。保存前让内核
-	# 自己解析一遍（-t：不监听、不碰缓存），有问题直接退回给前端。
+	# 审查 W20：上面只拦了「没有 bind」和双栈冲突。conf-file 指向不存在的
+	# 文件、bind 端口越界这两类，内核不会报错退出（真机实测照样跑），
+	# 但会让规则静默缺失或监听异常，所以保存前做确定性检查。
 	local check_msg
 	check_msg=$(conf_check_tmp "$tmp") || {
 		rm -f "$tmp"
-		err "配置未通过内核校验，已放弃写入：
-${check_msg:-（内核未给出原因）}"
+		err "配置检查未通过，已放弃写入：
+${check_msg:-（原因未知）}"
 	}
 
 	# 校验通过后才覆盖备份，避免一次失败写入把上一版备份也弄丢
