@@ -132,8 +132,9 @@ ensure_env() {
 	mkdir -p "$CORE_DIR" "$DATA_DIR" "$LOG_DIR" "$TEMP_DIR" 2>/dev/null
 	mount -o bind "$CORE_INTERNAL_DIR" "$CORE_DIR" 2>/dev/null
 	mount -o bind "$DATA_INTERNAL_DIR" "$DATA_DIR" 2>/dev/null
-	iptables-save > "$IPT_BAK" 2>/dev/null
-	ip6tables-save > "$IP6T_BAK" 2>/dev/null
+	# 只落干净快照（服务可能正在跑，见 constant.sh 的 ipt_snapshot）
+	ipt_snapshot "$IPT_BAK" iptables-save
+	ipt_snapshot "$IP6T_BAK" ip6tables-save
 	chmod 0640 "$TEMP_DIR"/*.bak 2>/dev/null
 	return 0
 }

@@ -1281,6 +1281,37 @@ restart_in_progress() {
 # 用户主动停止会写 $STOP_FLAG，此时看门狗完全不干预。
 # 健康判定直接看进程 + 防火墙规则，不调用 status 子进程——
 # 否则每 30 秒都会往 script.log 里刷一遍状态文本。
+# 看门狗单实例（原子判定）：mkdir 成功才算拿到锁。
+# 原实现只扫 /proc，有两个口子：
+#   1. 两个进程同时启动、都还没扫到对方 → 都通过，之后每 30 秒互杀一次；
+#   2. /proc 读不到（权限/内核限制）时当成"没有别的实例"，照样起来。
+# 扫描现在只作兜底，处理「锁是上次强杀留下的」和「pid 被复用」的情况。
+watch_enter() {
+	local lk="$WATCH_LOCK" owner='' i=0
+	if ! mkdir "$lk" 2>/dev/null; then
+		# 抢锁失败：mkdir 与写 pid 之间有几毫秒空窗，等对方写完再判断
+		while [ "$i" -lt 5 ]; do
+			owner=$(cat "$lk/pid" 2>/dev/null)
+			if [ -n "$owner" ]; then
+				break
+			fi
+			sleep 0.2 2>/dev/null || sleep 1
+			i=$((i + 1))
+		done
+		if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+			echo "[watchdog] 已有看门狗在运行 (pid $owner)，本次退出"
+			return 1
+		fi
+		# pid 无效 = 上次被强杀留下的锁，接管
+		rm -rf "$lk"
+		if ! mkdir "$lk" 2>/dev/null; then
+			return 1
+		fi
+	fi
+	echo $$ > "$lk/pid" 2>/dev/null
+	return 0
+}
+
 # 看门狗单实例。
 # 两个看门狗会各自判活、各自把内核「拉起来」，互相把对方的进程当成异常，
 # 结果是每 30 秒重启一次内核 —— DNS 反复抖动，比没有看门狗更糟。
@@ -1495,7 +1526,16 @@ get_args() {
 			;;
 
 		watch) # 看门狗（常驻，由 service.sh 在开机时拉起）
-			watch_singleton || exit 0
+			# 先抢目录锁（原子），再扫 /proc 兜底（锁残留 / pid 复用）
+			watch_enter || exit 0
+			if ! watch_singleton; then
+				rm -rf "$WATCH_LOCK"
+				exit 0
+			fi
+			# 正常退出/被 kill 时释放锁；TERM/INT 必须先退出，
+			# 只删锁不退出会让看门狗继续跑、锁却空了，下次启动就双开。
+			trap 'rm -rf "$WATCH_LOCK"' EXIT
+			trap 'exit 0' INT TERM
 			watch_loop
 			;;
 
@@ -1512,11 +1552,17 @@ get_args() {
 			# iptables-restore 是不行的：备份在 tmpfs，缺失时 restore 静默失败，
 			# 而且 PREROUTING 的代理跳转从来不在备份的还原范围里。
 			iptrules_off
-			# 还原 iptables
-			# iptables -F
-			# ip6tables -F
-			iptables-restore < $IPT_BAK
-			ip6tables-restore < $IP6T_BAK
+			# 还原 iptables：只认「干净」的备份（失效/空/含模块链都跳过）。
+			# 备份在 tmpfs，重启后本就可能不存在；更麻烦的是 ensure_env/initTask
+			# 若在服务运行期间抓过快照，备份里就带着 dns_redirect + --to-ports，
+			# restore 会把「重定向到死端口」原样恢复 —— 比不还原更糟。
+			# 自建链上面已经清掉了，这里还原不到只是少恢复别人的规则。
+			if ipt_bak_usable; then
+				iptables-restore < "$IPT_BAK" 2>/dev/null || true
+				ip6tables-restore < "$IP6T_BAK" 2>/dev/null || true
+			else
+				boot_note '[clean] iptables 备份缺失或不干净，跳过 restore（只清自建链）'
+			fi
 			# 停止服务器
 			server_stop
 			server_stop  
