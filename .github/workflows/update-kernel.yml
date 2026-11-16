@@ -2,7 +2,7 @@ name: Update Kernel
 
 on:
   schedule:
-    # 每周一 03:00 UTC 检查上游是否有新 Release
+    # 每周一 03:00 UTC（北京时间 11:00）检查上游是否有新的稳定版 Release
     - cron: '0 3 * * 1'
   workflow_dispatch:
 
@@ -24,16 +24,41 @@ jobs:
         id: up
         run: |
           set -euo pipefail
-          api=https://api.github.com/repos/pymumu/smartdns/releases/latest
-          json=$(curl -fsSL "$api")
-          tag=$(printf '%s' "$json" | jq -r '.tag_name')
-          ver=$(printf '%s' "$json" | jq -r '.assets[].name' \
+          repo_api=https://api.github.com/repos/pymumu/smartdns
+          json=$(curl -fsSL "$repo_api/releases?per_page=30")
+
+          # 只跟稳定版：prerelease/draft 一律跳过；tag 名里带 rc/beta/alpha/preview
+          # 的也跳过——上游的 RC 有时不标 prerelease（Release48.5-RC1 就是 false），
+          # 光看 prerelease 字段会把 RC 当成正式版更新进来。
+          tag=''
+          while IFS="$(printf '\t')" read -r pre draft name; do
+            [ -n "$name" ] || continue
+            [ "$pre" = 'false' ] || continue
+            [ "$draft" = 'false' ] || continue
+            case "$(printf '%s' "$name" | tr 'A-Z' 'a-z')" in
+              *rc*|*beta*|*alpha*|*preview*) continue ;;
+            esac
+            tag="$name"
+            break
+          done <<EOF
+          $(printf '%s' "$json" | jq -r '.[] | "\(.prerelease)\t\(.draft)\t\(.tag_name)"')
+          EOF
+
+          if [ -z "$tag" ]; then
+            echo '上游暂无稳定版 Release（最新均为 RC/预发布），本次跳过'
+            echo 'tag=' >> "$GITHUB_OUTPUT"
+            echo 'ver=' >> "$GITHUB_OUTPUT"
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ver=$(curl -fsSL "$repo_api/releases/tags/$tag" | jq -r '.assets[].name' \
                 | sed -n 's/^smartdns\.\(.*\)\.aarch64-linux-all\.tar\.gz$/\1/p' | head -n 1)
           current=$(tr -d '\r\n' < kernel.tag 2>/dev/null || true)
 
           echo "tag=$tag"     >> "$GITHUB_OUTPUT"
           echo "ver=$ver"     >> "$GITHUB_OUTPUT"
-          echo "上游最新: ${tag} (内核 ${ver}); 当前: ${current}"
+          echo "上游最新稳定版: ${tag} (内核 ${ver}); 当前: ${current}"
 
           if [ "$tag" != "$current" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -88,4 +113,9 @@ jobs:
 
       - name: 无更新
         if: steps.up.outputs.changed == 'false'
-        run: echo "已是最新内核 ${{ steps.up.outputs.tag }}，无需操作。"
+        run: |
+          if [ -n "${{ steps.up.outputs.tag }}" ]; then
+            echo "已是最新稳定版内核 ${{ steps.up.outputs.tag }}，无需操作。"
+          else
+            echo "上游暂无稳定版 Release（最新均为 RC/预发布），本次跳过。"
+          fi
