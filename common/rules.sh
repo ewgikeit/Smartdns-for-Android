@@ -630,13 +630,25 @@ _rules_gen_merged_body() {
 	#   whitelist-ip|blacklist-ip X       同一网段只能归一边
 	# 其余行（源里透传的陌生指令）按整行去重，只求不重复。
 	awk -v st="$stmp" '
-	BEGIN { total = 0; kept = 0; removed = 0; conflict = 0; sample = "" }
+	BEGIN { total = 0; kept = 0; removed = 0; conflict = 0; invalid = 0; sample = ""; badsample = "" }
 	NF == 0 { next }
 	{
 		t = $0
 		sub(/^[ \t]+/, "", t)
 		if (t ~ /^address[ \t]+\//) {
 			d = t; sub(/^address[ \t]+\//, "", d); sub(/\/.*/, "", d)
+			# 只接受 address /域名/目标，且目标必须是 # 或 IP。
+			# easylist 这类 ABP 源转换后会残留 `address /$object,.../#`、
+			# `address /!#xx.com/#`、`address /0gg/gg*.js/#` 之类，
+			# 内核会逐条拒绝；数量上万时加载几万行就整体退出（rc=0），
+			# 真机上表现为服务起不来且日志只有几行 failed。
+			tg = t; sub(/^.*\//, "", tg)
+			mid = t; sub(/^address[ \t]+\//, "", mid); sub(/\/[^\/]*$/, "", mid)
+			if (d !~ /^[A-Za-z0-9._*|-]+$/ || tg !~ /^(#|[0-9.]+|[0-9A-Fa-f:]+)$/ || mid != d || length(t) > 300) {
+				invalid++
+				if (invalid <= 3) badsample = badsample (badsample == "" ? "" : ",") substr(t, 9, 40)
+				next
+			}
 			key = "a:" tolower(d)
 		} else if (t ~ /^(nameserver|domain-rules)[ \t]+\//) {
 			d = t; sub(/^(nameserver|domain-rules)[ \t]+\//, "", d); sub(/\/.*/, "", d)
@@ -662,8 +674,8 @@ _rules_gen_merged_body() {
 		kept++
 	}
 	END {
-		printf "total=%d\nkept=%d\nremoved=%d\nconflict=%d\nsources=%d\nsample=%s\n", \
-			total, kept, removed, conflict, srcn, sample > st
+		printf "total=%d\nkept=%d\nremoved=%d\nconflict=%d\ninvalid=%d\nsources=%d\nsample=%s\nbadsample=%s\n", \
+			total, kept, removed, conflict, invalid, srcn, sample, badsample > st
 	}
 	' srcn="$n" "$raw" > "$tmp" || { rm -f "$tmp" "$raw" "$src"; return 2; }
 
@@ -687,15 +699,16 @@ _rules_gen_merged_body() {
 # 合并结果一行摘要，写进更新日志，出问题好回看
 rules_merge_summary() {
 	local f="$RULES_OUT/merged.stats"
-	local total kept removed conflict sources
+	local total kept removed conflict invalid sources
 	[ -f "$f" ] || { echo '[rules] 合并文件尚未生成'; return 0; }
 	total=$(sed -n 's/^total=//p' "$f" 2>/dev/null | head -n 1)
 	kept=$(sed -n 's/^kept=//p' "$f" 2>/dev/null | head -n 1)
 	removed=$(sed -n 's/^removed=//p' "$f" 2>/dev/null | head -n 1)
 	conflict=$(sed -n 's/^conflict=//p' "$f" 2>/dev/null | head -n 1)
+	invalid=$(sed -n 's/^invalid=//p' "$f" 2>/dev/null | head -n 1)
 	sources=$(sed -n 's/^sources=//p' "$f" 2>/dev/null | head -n 1)
-	printf '[rules] 合并 %s 个源：%s 条 -> 去重后 %s 条（删除重复 %s，语义冲突 %s）\n' \
-		"${sources:-0}" "${total:-0}" "${kept:-0}" "${removed:-0}" "${conflict:-0}"
+	printf '[rules] 合并 %s 个源：%s 条 -> 去重后 %s 条（删除重复 %s，语义冲突 %s，丢弃非法 %s）\n' \
+		"${sources:-0}" "${total:-0}" "${kept:-0}" "${removed:-0}" "${conflict:-0}" "${invalid:-0}"
 }
 
 # 重建"合并文件 + 索引"。改了源清单、更新了某个源、切了启停都走这里。
