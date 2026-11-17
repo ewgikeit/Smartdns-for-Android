@@ -1,5 +1,23 @@
 # 更新日志
 
+## 4.2.5
+
+### 默认启用持久化缓存与预取
+
+- `cache-persist yes`；`cache-file` 从 `/dev/smartdns/tmp/dns_cache` 改到
+  `/data/adb/smartdns/tmp/dns_cache`——前者在 tmpfs 上，重启即丢，
+  等于没有持久化；
+- `cache-checkpoint-time 3600`：异常掉电最多丢 1 小时缓存；
+- `prefetch-domain yes`：已缓存域名的 TTL 接近过期时提前回源，减少冷启动时延；
+- `serve-expired yes` + `serve-expired-ttl 0` + `serve-expired-reply-ttl 3`：
+  上游不可达时返回过期记录，避免直接解析失败。
+
+以上只影响**新装**的默认值；升级安装不会覆盖已有的 `smartdns.conf`，
+只会把它另存为 `example-smartdns.conf`。
+
+注意：`serve-expired-ttl 0` 表示不限制过期时长，对记录新鲜度要求高的场景
+可以改小（如 `259200` 即 3 天）；`prefetch-domain` 会略微增加上游查询。
+
 ## 4.2.4
 
 ### 修复：规则源里的非法行会让内核整体退出
