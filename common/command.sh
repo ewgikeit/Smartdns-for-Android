@@ -1367,7 +1367,7 @@ watch_rules() {
 	fi
 	# shellcheck disable=SC2086
 	$runner sh -c '
-		sh "$1" rulesrc update all >> "$2" 2>&1
+		sh "$1" rulesrc update due >> "$2" 2>&1
 		rc=$?
 		echo "[watchdog] $(date +%c) 规则源更新结束 (rc=$rc)" >> "$2"
 		rm -f "$3"
@@ -1744,7 +1744,7 @@ get_args() {
 			;;
 
 		rulesrc) # 规则源管理
-			# 用法: rulesrc list|status|due|update [id|all]|add|del|reload
+			# 用法: rulesrc list|status|due|update [id|all|due]|add|del|reload
 			case "$2" in
 				list|status)
 					rules_init >/dev/null 2>&1

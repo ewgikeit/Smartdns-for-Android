@@ -760,11 +760,45 @@ rules_gen_index() {
 }
 
 # 批量更新。changed 由返回值汇总，是否需要重启内核交给调用方决定。
+# $1 = all | due | <id>
+#   all  手动全量更新（WebUI「立即更新」）
+#   due  只更到期的源（看门狗用）
 rules_update() {
-	# $1 = all | <id>   $2 = force
+	# $1 = all | due | <id>   $2 = force
 	local target="${1:-all}" force="${2:-0}"
-	local id rc changed=0 failed=0
+	local id rc changed=0 failed=0 _due
 	rules_init
+
+	# 只更新到期的源。看门狗原来用 rules_due 判断"有源到期"，但执行的是
+	# update all：只要有任意一个源（比如 6 小时的 github520）到期，168 小时的
+	# chnroute/chnlist/anti-ad 也会被一起重下，所有源实际都按最短 interval 在
+	# 刷，流量、写盘和内核重启次数都被放大。
+	if [ "$target" = 'due' ]; then
+		_due=$(rules_due 2>/dev/null)
+		if [ -z "$_due" ]; then
+			echo '[rules] 没有到期的源'
+			return 1
+		fi
+		rm -f "$TEMP_DIR/rules.changed" "$TEMP_DIR/rules.failed"
+		RULES_MERGE_DEFER=1
+		for id in $_due; do
+			rules_update_one "$id" "$force"
+			case "$?" in
+				0) echo "$id" >> "$TEMP_DIR/rules.changed" ;;
+				2) echo "$id" >> "$TEMP_DIR/rules.failed" ;;
+			esac
+		done
+		RULES_MERGE_DEFER=0
+		rules_regen
+		changed=0
+		failed=0
+		[ -f "$TEMP_DIR/rules.changed" ] && changed=$(wc -l < "$TEMP_DIR/rules.changed" | tr -d ' \t')
+		[ -f "$TEMP_DIR/rules.failed" ] && failed=$(wc -l < "$TEMP_DIR/rules.failed" | tr -d ' \t')
+		echo "[rules] 到期源更新完成：${changed:-0} 个有变化，${failed:-0} 个失败"
+		[ "${changed:-0}" -gt 0 ] && return 0
+		[ "${failed:-0}" -gt 0 ] && return 2
+		return 1
+	fi
 
 	if [ "$target" != 'all' ]; then
 		RULES_MERGE_DEFER=1
