@@ -446,7 +446,7 @@ rules_update_one() {
 	case "$url" in
 		http://*|https://*)
 			if ! rules_fetch "$url" "$raw"; then
-				rules_state_set "$id" "status=fail" "msg=下载失败" "last=$(date +%s)"
+				rules_state_set "$id" "status=fail" "msg=下载失败" "lastfail=$(date +%s)"
 				echo "[rules] $id 下载失败"
 				return 2
 			fi
@@ -456,7 +456,7 @@ rules_update_one() {
 			rm -f "$raw" 2>/dev/null
 			raw=$(rules_local_path "$url")
 			if [ -z "$raw" ]; then
-				rules_state_set "$id" "status=fail" "msg=源文件不存在" "last=$(date +%s)"
+				rules_state_set "$id" "status=fail" "msg=源文件不存在" "lastfail=$(date +%s)"
 				echo "[rules] $id 源文件不存在: $url"
 				return 2
 			fi
@@ -470,7 +470,7 @@ rules_update_one() {
 		http://*|https://*)
 			if head -c 512 "$raw" 2>/dev/null | tr 'A-Z' 'a-z' | grep -qE '<!doctype[[:space:]]+html|<html|<head|<body'; then
 				rm -f "$raw"
-				rules_state_set "$id" "status=fail" "msg=源返回网页而非规则" "last=$(date +%s)"
+				rules_state_set "$id" "status=fail" "msg=源返回网页而非规则" "lastfail=$(date +%s)"
 				echo "[rules] $id 返回的是网页而不是规则文件，已忽略"
 				return 2
 			fi
@@ -479,7 +479,7 @@ rules_update_one() {
 
 	if ! rules_conv "$type" "$raw" "$tmp"; then
 		rm -f "$tmp"
-		rules_state_set "$id" "status=fail" "msg=类型不支持: $type" "last=$(date +%s)"
+		rules_state_set "$id" "status=fail" "msg=类型不支持: $type" "lastfail=$(date +%s)"
 		echo "[rules] $id 类型不支持: $type"
 		return 2
 	fi
@@ -491,7 +491,7 @@ rules_update_one() {
 		http://*|https://*)
 			if [ "${n:-0}" -eq 0 ]; then
 				rm -f "$tmp"
-				rules_state_set "$id" "status=fail" "msg=转换结果为空，疑似源格式变化" "last=$(date +%s)"
+				rules_state_set "$id" "status=fail" "msg=转换结果为空，疑似源格式变化" "lastfail=$(date +%s)"
 				echo "[rules] $id 转换结果为空，保留上一次的规则"
 				return 2
 			fi
@@ -500,7 +500,7 @@ rules_update_one() {
 
 	if ! rules_validate "$type" "$tmp"; then
 		rm -f "$tmp"
-		rules_state_set "$id" "status=fail" "msg=内容校验未通过(行数 ${n:-0})" "last=$(date +%s)"
+		rules_state_set "$id" "status=fail" "msg=内容校验未通过(行数 ${n:-0})" "lastfail=$(date +%s)"
 		echo "[rules] $id 内容校验未通过，保留上一次的规则"
 		return 2
 	fi
@@ -511,7 +511,7 @@ rules_update_one() {
 
 	if [ -n "$old_md5" ] && [ "$old_md5" = "$new_md5" ]; then
 		rm -f "$tmp"
-		rules_state_set "$id" "status=ok" "msg=无变化" "lines=${n:-0}" "last=$(date +%s)" "lastday=$(date +%Y%m%d)"
+		rules_state_set "$id" "status=ok" "msg=无变化" "lines=${n:-0}" "last=$(date +%s)" "lastfail=0" "lastday=$(date +%Y%m%d)"
 		echo "[rules] $id 无变化 (${n:-0} 条)"
 		# 文件没变，但合并文件/索引可能因为别的源变了而不一致，顺手对齐
 		rules_after_update
@@ -519,7 +519,7 @@ rules_update_one() {
 	fi
 
 	mv -f "$tmp" "$out" 2>/dev/null || { rm -f "$tmp"; return 2; }
-	rules_state_set "$id" "status=ok" "msg=已更新" "lines=${n:-0}" "last=$(date +%s)" "lastday=$(date +%Y%m%d)"
+	rules_state_set "$id" "status=ok" "msg=已更新" "lines=${n:-0}" "last=$(date +%s)" "lastfail=0" "lastday=$(date +%Y%m%d)"
 	echo "[rules] $id 已更新 (${n:-0} 条)"
 	# 单源更新（WebUI 点「立即更新」）也必须重建合并文件，
 	# 否则生成的文件存在、内核加载的还是上一份。
@@ -859,7 +859,7 @@ rules_update_local_only() {
 ### 调度 ------------------------------------------------------------------
 # 列出到期该更新的源。watch 循环每轮调用一次，结果为空就跳过。
 rules_due() {
-	local id type url intv en at now last lastday hm today dow dom
+	local id type url intv en at now last lastday lastfail hm today dow dom
 	now=$(date +%s)
 	today=$(date +%Y%m%d)
 	hm=$(date +%H:%M)
@@ -869,6 +869,13 @@ rules_due() {
 		[ "$en" = '0' ] && continue
 		last=$(rules_state_get "$id" last)
 		lastday=$(rules_state_get "$id" lastday)
+		lastfail=$(rules_state_get "$id" lastfail)
+		# 失败冷却：失败不写 last，若不冷却，看门狗每轮（30 秒）都会重撞一次；
+		# 冷却 RULES_RETRY_COOLDOWN 秒（默认 900）既不会把源晾一整个周期，
+		# 也不会把日志刷满。
+		if [ -n "$lastfail" ] && [ "$lastfail" -gt 0 ] 2>/dev/null; then
+			[ $((now - lastfail)) -lt "${RULES_RETRY_COOLDOWN:-900}" ] && continue
+		fi
 		if [ -n "$at" ]; then
 			# 定点模式：分钟对上才跑。每周/每月由 rules_at_match 按星期/日期判断，
 			# lastday 保证当天只跑一次（同一天重复命中也不会重复下载）。
