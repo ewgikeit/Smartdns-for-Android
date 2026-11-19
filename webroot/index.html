@@ -1216,20 +1216,11 @@ function testConf(btn) {
 }
 
 /* ---------- 日志 ---------- */
-// 日志倒序：最新一行放最上面，排查问题不用滚到底。
-// 兼容 CRLF，并去掉 tail 输出末尾的空行，避免倒序后顶部出现空行。
-function reverseLines(text) {
-  var lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
-  while (lines.length && lines[lines.length - 1] === '') lines.pop();
-  return lines.reverse().join('\n');
-}
-
 function loadLog() {
   if (!MODDIR) return Promise.resolve();
   var box = document.getElementById('logBox');
   return shell('tail', [q(state.logName), String(state.logLines)], true).then(function (out) {
-    box.textContent = reverseLines(asText(out)) || '（日志为空）';
-    box.scrollTop = 0;
+    box.textContent = asText(out) || '（日志为空）';
   }).catch(function (e) {
     box.textContent = '读取失败：' + e.message;
   });
@@ -1976,8 +1967,8 @@ document.getElementById('btnRulesLog').onclick = function () {
   pre.style.display = show ? 'block' : 'none';
   if (!show) return;
   shell('rules', ['log', '80'], true).then(function (out) {
-    pre.textContent = reverseLines(asText(parseKV(out).b64 || '')) || '（暂无更新日志）';
-    pre.scrollTop = 0;
+    pre.textContent = asText(parseKV(out).b64 || '') || '（暂无更新日志）';
+    pre.scrollTop = pre.scrollHeight;
   }).catch(function (e) { pre.textContent = e.message; });
 };
 
