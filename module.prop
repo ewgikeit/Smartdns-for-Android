@@ -1,7 +1,7 @@
 id=smartdns
 name=SmartDNS
-version=4.2.5 (1.2026.08.05-0921)
-versionCode=28
+version=4.2.6 (1.2026.08.05-0921)
+versionCode=29
 author=ewgikeit
 description=让 SmartDNS 运行在 Android 上。内置 WebUI：服务启停、端口与模式、放行应用、smartdns.conf 在线编辑与配置测试、日志查看、规则源增删改与自定义更新周期，掉线自动拉起。
 updateJson=https://github.com/ewgikeit/Smartdns-for-Android/raw/master/updateinfo.json
